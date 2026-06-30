@@ -111,6 +111,13 @@ the ESPHome component, which derives `charging_power = max(0, V·I)` and
 `discharging_power = |min(0, V·I)|`). Operating state is derived from current with
 a small dead-band: `|I| < 0.1 A` → *standby*.
 
+This decoder reads the field as a true two's-complement `int32` (`struct '<i'`).
+The ESPHome reference signs negatives with `value - 4294967295` (off by one
+count), so the two can differ by at most 1 mA on negative currents; this decoder
+is the exact one. The parity is locked down by `tests/test_reference_parity.py`,
+which re-implements ESPHome's nibble-level algorithm and asserts field-for-field
+agreement across random frames.
+
 ---
 
 ## 4. Status / alarm bitfield (offset 18, u32)
