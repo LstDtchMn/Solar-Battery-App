@@ -12,6 +12,7 @@ bridge, dashboard) works even where bleak isn't installed.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import sys
 import time
@@ -37,6 +38,49 @@ _NAME_CLEAN_RE = re.compile(r"[\x00-\x1f<>&\"'\\]")
 
 def _clean_name(name: str) -> str:
     return _NAME_CLEAN_RE.sub("", (name or ""))[:48].strip()
+
+
+log = logging.getLogger(__name__)
+
+
+async def quick_scan(timeout: float = 5.0) -> dict:
+    """A standalone scan for the 'Run Bluetooth test' button.
+
+    Returns ``{ok, count, devices, error}``. Never raises.
+    """
+    try:
+        from bleak import BleakScanner
+    except Exception as exc:  # bleak not installed
+        return {"ok": False, "count": 0, "devices": [],
+                "error": f"Bluetooth support not installed ({exc}). "
+                         f"Run: pip install bleak"}
+
+    found: Dict[str, dict] = {}
+
+    def cb(device, adv):
+        name = adv.local_name or device.name or ""
+        is_hlx = _looks_like_hlx(name, getattr(adv, "service_uuids", None))
+        found[device.address] = {
+            "address": device.address,
+            "name": _clean_name(name) or device.address,
+            "rssi": getattr(adv, "rssi", None),
+            "is_hlx": is_hlx,
+        }
+
+    try:
+        scanner = BleakScanner(detection_callback=cb)
+        await scanner.start()
+        await asyncio.sleep(timeout)
+        await scanner.stop()
+    except Exception as exc:
+        log.warning("Bluetooth test scan failed: %s", exc)
+        return {"ok": False, "count": 0, "devices": [],
+                "error": f"{type(exc).__name__}: {exc}"}
+
+    devices = sorted(found.values(), key=lambda d: (not d["is_hlx"], d["name"]))
+    hlx = [d for d in devices if d["is_hlx"]]
+    return {"ok": True, "count": len(hlx), "devices": devices,
+            "total_seen": len(devices), "error": ""}
 
 
 def _looks_like_hlx(name: Optional[str], service_uuids) -> bool:
@@ -145,19 +189,23 @@ class BleTransport(Transport):
         state = self._states[address]
         while self._running:
             try:
+                log.debug("Connecting to %s", address)
                 await self._connect_once(address, state)
             except asyncio.CancelledError:
                 raise
             except BleakError as exc:
                 state.connected = False
                 state.error = str(exc)
+                log.warning("BLE error for %s: %s", address, exc)
                 await self._emit_state(state)
             except Exception as exc:  # noqa: BLE001 - keep the supervisor alive
                 state.connected = False
                 state.error = f"{type(exc).__name__}: {exc}"
+                log.warning("Connection error for %s: %s", address, state.error)
                 await self._emit_state(state)
             if not self._running:
                 break
+            log.debug("Reconnecting to %s in %.1fs", address, self.reconnect_seconds)
             await asyncio.sleep(self.reconnect_seconds)
 
     async def _connect_once(self, address: str, state: ConnectionState) -> None:

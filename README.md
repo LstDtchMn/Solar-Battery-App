@@ -11,6 +11,9 @@ for a remote cabin — and does everything the old app did, plus a lot more.
 
 ![dashboard](docs/dashboard.png)
 
+> **New here?** Read the [**Quick Start**](QUICKSTART.md) — it's written for
+> non-technical users: download one file, double-click, follow the wizard.
+
 ---
 
 ## Why this exists
@@ -38,8 +41,19 @@ again.
 | **State-of-Health estimate** | ❌ | ✅ |
 | **CSV export** | ❌ | ✅ |
 | **Runs headless / on a server, reachable from your phone** | ❌ | ✅ |
+| **Guided setup wizard + connection diagnostics page** | ❌ | ✅ |
+| **In-app tooltips + glossary (plain-language help)** | ❌ | ✅ |
+| **Troubleshooting log + one-click diagnostics bundle** | ❌ | ✅ |
+| **One-file double-click app (no Python needed)** | — | ✅ (Windows .exe) |
 | **Works with no internet** | ✅ | ✅ |
 | **No vendor account / cloud** | — | ✅ |
+
+## Easiest start — the double-click app (Windows)
+
+Download `KiloVaultMonitor.exe` (Releases, or build it — see
+[`docs/USAGE.md`](docs/USAGE.md#packaging)), **double-click it**, and follow the
+setup wizard. No Python, no command line. Full walkthrough in the
+[**Quick Start**](QUICKSTART.md).
 
 ## Quick start — try it with no hardware
 
@@ -51,7 +65,9 @@ python -m kilovault.cli serve --simulate --open
 ```
 
 Open <http://127.0.0.1:8765>. You'll see two simulated batteries charging and
-discharging, with live charts and alarms.
+discharging, with live charts and alarms. A **setup wizard** greets you on first
+run; every number has an **ⓘ tooltip**, and the **Diagnostics** tab helps when a
+connection misbehaves.
 
 ## Use it with real batteries
 

@@ -44,6 +44,10 @@ class BatteryState:
     _last_ts: Optional[float] = None
     ema_power: float = 0.0
 
+    # Connection-health counters (surfaced on the Diagnostics page).
+    frames_received: int = 0
+    crc_errors: int = 0
+
     # -- ingest ---------------------------------------------------------
     def mark_disconnected(self) -> None:
         """Reset the integration clock so the post-reconnect gap is not counted."""
@@ -54,6 +58,9 @@ class BatteryState:
             self.capacity_ah = self.capacity_override
         elif sample.total_capacity and sample.total_capacity > 0:
             self.capacity_ah = sample.total_capacity
+        self.frames_received += 1
+        if not sample.crc_ok:
+            self.crc_errors += 1
         ts = sample.timestamp or time.time()
         if self._last_ts is not None:
             dt = ts - self._last_ts
@@ -122,6 +129,8 @@ class BatteryState:
             "time_to_full_h": self.time_to_full_h,
             "time_to_empty_h": self.time_to_empty_h,
             "session_seconds": round(time.time() - self.session_start),
+            "frames_received": self.frames_received,
+            "crc_errors": self.crc_errors,
         }
         if self.connection:
             d["connected"] = self.connection.connected

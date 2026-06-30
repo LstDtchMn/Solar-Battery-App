@@ -8,16 +8,20 @@ runs in a single asyncio loop; the web server reads immutable snapshots.
 from __future__ import annotations
 
 import asyncio
+import logging
+import platform
 import time
 from typing import Dict, List, Optional, Set
 
 from .alarms import AlarmEngine, Notifier
-from .config import Config
+from .config import Config, TransportConfig
 from .estimator import BatteryState, bank_summary
 from .protocol import BatterySample
 from .storage import Storage
 from .transports import build_transport
 from .transports.base import ConnectionState
+
+log = logging.getLogger(__name__)
 
 
 class Manager:
@@ -30,6 +34,7 @@ class Manager:
         self._subscribers: Set[asyncio.Queue] = set()
         self._last_log: Dict[str, float] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._collector_task: Optional[asyncio.Task] = None
         self.transport = build_transport(
             config.transport, self._on_sample, self._on_state
         )
@@ -65,6 +70,7 @@ class Manager:
         try:
             active = self.alarms.evaluate(st)
         except Exception:
+            log.exception("alarm evaluation failed for %s", sample.address)
             active = []
 
         now = sample.timestamp or time.time()
@@ -85,11 +91,19 @@ class Manager:
     async def _on_state(self, conn: ConnectionState) -> None:
         st = self._state_for(conn.address)
         # Preserve a user-set friendly name.
+        was_connected = bool(st.connection and st.connection.connected)
         if not (st.name and st.name != conn.address):
             st.name = conn.name or conn.address
         if not conn.connected:
             st.mark_disconnected()
         st.connection = conn
+        # Log connection transitions — the most useful thing during support.
+        if conn.connected and not was_connected:
+            log.info("Connected to %s (%s)  rssi=%s fw=%s",
+                     conn.name or conn.address, conn.address, conn.rssi, conn.firmware)
+        elif not conn.connected and was_connected:
+            log.warning("Disconnected from %s (%s)%s", conn.name or conn.address,
+                        conn.address, f": {conn.error}" if conn.error else "")
         try:
             self.storage.upsert_device(
                 conn.address, conn.name, conn.model, conn.serial, conn.firmware
@@ -139,6 +153,53 @@ class Manager:
             "events": self.storage.recent_events(limit=50),
         }
 
+    def diagnostics(self) -> dict:
+        """Connection/setup health for the Diagnostics page."""
+        try:
+            import bleak
+            bleak_ver = getattr(bleak, "__version__", "installed")
+        except Exception:
+            bleak_ver = None
+        try:
+            import serial
+            serial_ver = getattr(serial, "__version__", "installed")
+        except Exception:
+            serial_ver = None
+
+        import kilovault
+        batteries = []
+        for st in self.states.values():
+            conn = st.connection
+            s = st.sample
+            batteries.append({
+                "address": st.address,
+                "name": st.name or st.address,
+                "connected": bool(conn and conn.connected),
+                "rssi": conn.rssi if conn else None,
+                "last_seen": conn.last_seen if conn else None,
+                "model": conn.model if conn else "",
+                "firmware": conn.firmware if conn else "",
+                "serial": conn.serial if conn else "",
+                "error": conn.error if conn else "",
+                "frames_received": st.frames_received,
+                "crc_errors": st.crc_errors,
+                "soc": s.soc if s else None,
+                "voltage": s.voltage if s else None,
+            })
+        return {
+            "version": kilovault.__version__,
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+            "transport": self.cfg.transport.type,
+            "db_path": str(self.cfg.db_path),
+            "bleak_version": bleak_ver,
+            "pyserial_version": serial_ver,
+            "battery_count": len(self.states),
+            "online_count": sum(1 for st in self.states.values()
+                                if st.connection and st.connection.connected),
+            "batteries": batteries,
+        }
+
     # -- control --------------------------------------------------------
     def rename(self, address: str, name: str) -> None:
         self.storage.set_device_name(address, name)
@@ -153,11 +214,55 @@ class Manager:
         st.capacity_override = capacity_ah
         st.capacity_ah = capacity_ah
 
-    # ------------------------------------------------------------------
+    # -- lifecycle ------------------------------------------------------
+    async def start(self) -> None:
+        """Launch the collector in the background (non-blocking)."""
+        self._loop = asyncio.get_running_loop()
+        log.info("Starting collector (transport=%s)", self.cfg.transport.type)
+        self._collector_task = asyncio.ensure_future(self._run_transport())
+
+    async def _run_transport(self) -> None:
+        try:
+            await self.transport.run()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Transport loop crashed (transport=%s)",
+                          self.cfg.transport.type)
+
+    async def set_transport(self, tcfg: TransportConfig) -> None:
+        """Hot-swap the data source (used by the setup wizard)."""
+        log.info("Switching transport %s -> %s", self.cfg.transport.type, tcfg.type)
+        try:
+            await self.transport.stop()
+        except Exception:
+            log.debug("error stopping old transport", exc_info=True)
+        if self._collector_task:
+            self._collector_task.cancel()
+            try:
+                await self._collector_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self.cfg.transport = tcfg
+        self.transport = build_transport(tcfg, self._on_sample, self._on_state)
+        self._collector_task = asyncio.ensure_future(self._run_transport())
+        await self._publish({"type": "transport", "transport": tcfg.type})
+
     async def run(self) -> None:
-        self._loop = asyncio.get_event_loop()
-        await self.transport.run()
+        """Start the collector and block until it finishes (for `monitor`)."""
+        await self.start()
+        if self._collector_task:
+            await self._collector_task
 
     async def stop(self) -> None:
-        await self.transport.stop()
+        if self._collector_task:
+            self._collector_task.cancel()
+            try:
+                await self._collector_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        try:
+            await self.transport.stop()
+        except Exception:
+            pass
         self.storage.close()

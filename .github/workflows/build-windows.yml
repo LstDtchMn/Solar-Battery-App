@@ -1,0 +1,59 @@
+name: Build Windows executable
+
+# Builds a single double-click KiloVaultMonitor.exe so non-technical users can
+# run the monitor without installing Python. Runs on demand and on version tags;
+# the .exe is uploaded as a build artifact (and attached to a release on tags).
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller bleak pyserial
+
+      - name: Run tests
+        run: |
+          pip install pytest
+          python -m pytest -q
+
+      - name: Build executable
+        run: pyinstaller --noconfirm --clean kilovault.spec
+
+      - name: Smoke-test the executable
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\KiloVaultMonitor.exe" `
+            -ArgumentList "serve","--simulate","--port","8799" -PassThru
+          Start-Sleep -Seconds 12
+          $r = Invoke-WebRequest -Uri "http://127.0.0.1:8799/api/snapshot" -UseBasicParsing
+          if ($r.StatusCode -ne 200) { throw "exe did not serve" }
+          Stop-Process -Id $p.Id -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KiloVaultMonitor-windows
+          path: dist/KiloVaultMonitor.exe
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/KiloVaultMonitor.exe

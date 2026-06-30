@@ -96,27 +96,33 @@ async def _serve(cfg: Config) -> int:
     manager = Manager(cfg)
     server = DashboardServer(manager, cfg.web.host, cfg.web.port)
     await server.start()
+    await manager.start()
 
-    url = f"http://{cfg.web.host}:{cfg.web.port}/"
-    print(f"KiloVault HLX+ Monitor v{__version__}")
-    print(f"  transport : {cfg.transport.type}")
-    print(f"  database  : {cfg.db_path}")
-    print(f"  dashboard : {url}")
+    host_display = "localhost" if cfg.web.host in ("127.0.0.1", "0.0.0.0", "::") else cfg.web.host
+    url = f"http://{host_display}:{cfg.web.port}/"
+    bind_url = f"http://{cfg.web.host}:{cfg.web.port}/"
+    print("=" * 56)
+    print(f"  KiloVault HLX+ Monitor  v{__version__}")
+    print("=" * 56)
+    print(f"  Open the dashboard:  {url}")
     if cfg.web.host in ("0.0.0.0", "::"):
-        print("  (reachable from other devices on this LAN, e.g. your phone)")
-    print("Press Ctrl+C to stop.\n")
+        print("  On your phone/tablet (same Wi-Fi): http://<this-PC-IP>:"
+              f"{cfg.web.port}/")
+    print(f"  Data + log folder:   {cfg.data_dir}")
+    print(f"  Source / mode:       {cfg.transport.type}")
+    print("  Close this window (or press Ctrl+C) to stop.")
+    print("=" * 56)
 
     if cfg.web.open_browser:
         try:
             import webbrowser
-            webbrowser.open(url)
+            webbrowser.open(bind_url if host_display != "localhost" else
+                            f"http://127.0.0.1:{cfg.web.port}/")
         except Exception:
             pass
 
-    collector = asyncio.ensure_future(manager.run())
-    serving = asyncio.ensure_future(server._server.serve_forever())
     try:
-        await asyncio.gather(collector, serving)
+        await server._server.serve_forever()
     except asyncio.CancelledError:
         pass
     finally:
@@ -191,17 +197,30 @@ def _init_config(path: str) -> int:
     return 0
 
 
+def _diagnostics(cfg: Config, out) -> int:
+    from .diagnostics import build_zip
+
+    path = build_zip(cfg, Path(out) if out else None)
+    print("Diagnostics bundle written to:")
+    print(f"  {path}")
+    print("\nEmail this file (it contains the log, your settings and system info)")
+    print("so the problem can be diagnosed. It contains no passwords.")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="kvmon", description="KiloVault HLX+ battery monitor")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("-c", "--config", help="path to config.toml")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    # No subcommand -> serve (so double-clicking the .exe just works).
+    sub = p.add_subparsers(dest="cmd", required=False)
 
     sp = sub.add_parser("serve", help="run the web dashboard + logger")
     sp.add_argument("--simulate", action="store_true", help="use the hardware-free simulator")
     sp.add_argument("--serial", help="use an ESP32 serial bridge (e.g. COM3 or /dev/ttyUSB0)")
     sp.add_argument("--host", help="web bind host (use 0.0.0.0 for LAN access)")
+    sp.add_argument("--lan", action="store_true", help="allow access from other devices on the LAN (binds 0.0.0.0)")
     sp.add_argument("--port", type=int, help="web port")
     sp.add_argument("--db", help="history database path")
     sp.add_argument("--open", dest="open_browser", action="store_true", help="open a browser")
@@ -223,10 +242,14 @@ def build_parser() -> argparse.ArgumentParser:
     ic = sub.add_parser("init-config", help="write a documented config.toml")
     ic.add_argument("path", nargs="?", default=DEFAULT_CONFIG_NAME)
 
+    dg = sub.add_parser("diagnostics", help="write a support bundle (.zip) to email")
+    dg.add_argument("out", nargs="?", help="output .zip path")
+    dg.add_argument("--db")
+
     return p
 
 
-def main(argv=None) -> int:
+def _run(argv) -> int:
     _make_console_utf8()
     args = build_parser().parse_args(argv)
 
@@ -236,20 +259,61 @@ def main(argv=None) -> int:
     cfg = _load_config(args)
     if getattr(args, "open_browser", False):
         cfg.web.open_browser = True
+    if getattr(args, "lan", False):
+        cfg.web.host = "0.0.0.0"
 
+    # A double-clicked .exe runs with no subcommand: behave like `serve --open`
+    # and store data in a stable per-user folder (not next to the .exe).
+    cmd = args.cmd or "serve"
+    if args.cmd is None:
+        cfg.web.open_browser = True
+    if getattr(sys, "frozen", False) and not getattr(args, "db", None):
+        base = Path.home() / "KiloVault Monitor"
+        cfg.data_dir = base
+        cfg.db_path = base / "kilovault_history.db"
+
+    from .logging_setup import setup_logging, log_environment
+
+    log_path = setup_logging(cfg.data_dir)
+    if cmd in ("serve", "monitor"):
+        log_environment(cfg)
+        print(f"Log file: {log_path}")
+
+    if cmd == "serve":
+        return asyncio.run(_serve(cfg))
+    if cmd == "scan":
+        return asyncio.run(_scan(cfg, args.timeout))
+    if cmd == "monitor":
+        return asyncio.run(_monitor(cfg))
+    if cmd == "export":
+        return _export(cfg, args.out, args.address, args.minutes)
+    if cmd == "diagnostics":
+        return _diagnostics(cfg, getattr(args, "out", None))
+    return 0
+
+
+def main(argv=None) -> int:
+    frozen = bool(getattr(sys, "frozen", False))
     try:
-        if args.cmd == "serve":
-            return asyncio.run(_serve(cfg))
-        if args.cmd == "scan":
-            return asyncio.run(_scan(cfg, args.timeout))
-        if args.cmd == "monitor":
-            return asyncio.run(_monitor(cfg))
-        if args.cmd == "export":
-            return _export(cfg, args.out, args.address, args.minutes)
+        return _run(argv)
     except KeyboardInterrupt:
         print("\nStopped.")
         return 0
-    return 0
+    except Exception as exc:  # surface fatal errors clearly for non-technical users
+        import logging
+        logging.getLogger("kilovault").critical("Fatal error", exc_info=True)
+        print(f"\nERROR: {exc}")
+        print("See the log file above for details, or run "
+              "'kvmon diagnostics' to create a support bundle.")
+        return 1
+    finally:
+        # When launched by double-clicking the .exe, keep the window open so the
+        # user can read any message instead of it vanishing instantly.
+        if frozen:
+            try:
+                input("\nPress Enter to close this window...")
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

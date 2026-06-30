@@ -20,16 +20,32 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
+import sys
 import tempfile
 import time
 import urllib.parse
 from pathlib import Path
 from typing import Optional, Tuple
 
+from ..config import TransportConfig
 from ..manager import Manager
 
-STATIC_DIR = Path(__file__).parent / "static"
+log = logging.getLogger(__name__)
+
+
+def _resolve_static_dir() -> Path:
+    """Find the bundled static assets, including inside a PyInstaller .exe."""
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        candidate = base / "kilovault" / "server" / "static"
+        if candidate.exists():
+            return candidate
+    return Path(__file__).parent / "static"
+
+
+STATIC_DIR = _resolve_static_dir()
 
 
 class DashboardServer:
@@ -99,6 +115,8 @@ class DashboardServer:
     async def _route(self, method, path, params, body, writer):
         if method == "GET" and path == "/":
             return await self._send_file(writer, STATIC_DIR / "index.html")
+        if method == "GET" and path == "/favicon.ico":
+            return await self._send(writer, 204, "image/x-icon", b"")
         if method == "GET" and path.startswith("/static/"):
             name = path[len("/static/"):]
             target = (STATIC_DIR / name).resolve()
@@ -118,6 +136,26 @@ class DashboardServer:
             return await self._json(
                 writer, {"events": self.manager.storage.recent_events(addr, limit)}
             )
+
+        if method == "GET" and path == "/api/diagnostics":
+            return await self._json(writer, self.manager.diagnostics())
+
+        if method == "GET" and path == "/api/preflight":
+            return await self._json(writer, self._preflight())
+
+        if method == "POST" and path == "/api/test-bluetooth":
+            from ..transports.ble import quick_scan
+            timeout = float(_one(params, "timeout", "5"))
+            return await self._json(writer, await quick_scan(timeout))
+
+        if method == "GET" and path == "/api/log":
+            return await self._serve_log(writer, params)
+
+        if method == "GET" and path == "/api/diagnostics.zip":
+            return await self._serve_diagnostics_zip(writer)
+
+        if method == "POST" and path == "/api/transport":
+            return await self._set_transport(writer, _json_body(body))
 
         if method == "GET" and path == "/api/stream":
             return await self._stream(writer)
@@ -151,6 +189,77 @@ class DashboardServer:
         since = time.time() - minutes * 60 if minutes > 0 else None
         rows = self.manager.storage.history(addr, since=since, limit=limit)
         return await self._json(writer, {"address": addr, "rows": rows})
+
+    def _preflight(self) -> dict:
+        """Environment capability check for the setup wizard."""
+        from ..diagnostics import list_serial_ports
+        result = {"transport": self.manager.cfg.transport.type}
+        try:
+            import bleak
+            result["bluetooth"] = {"installed": True,
+                                   "version": getattr(bleak, "__version__", "installed")}
+        except Exception as exc:
+            result["bluetooth"] = {"installed": False, "error": str(exc)}
+        try:
+            import serial  # noqa: F401
+            result["serial"] = {"installed": True}
+        except Exception as exc:
+            result["serial"] = {"installed": False, "error": str(exc)}
+        result["serial_ports"] = list_serial_ports()
+        return result
+
+    async def _set_transport(self, writer, data: dict):
+        """Hot-swap the data source from the wizard."""
+        kind = (data.get("type") or "").lower()
+        if kind not in ("ble", "serial", "simulator"):
+            return await self._json(writer, {"ok": False, "error": "bad type"}, 400)
+        tcfg = TransportConfig(
+            type=kind,
+            serial_port=data.get("serial_port", self.manager.cfg.transport.serial_port),
+            serial_baud=int(data.get("serial_baud", self.manager.cfg.transport.serial_baud)),
+            sim_batteries=int(data.get("sim_batteries", self.manager.cfg.transport.sim_batteries)),
+            scan_timeout=self.manager.cfg.transport.scan_timeout,
+            reconnect_seconds=self.manager.cfg.transport.reconnect_seconds,
+        )
+        try:
+            await self.manager.set_transport(tcfg)
+            return await self._json(writer, {"ok": True, "transport": kind})
+        except Exception as exc:
+            log.exception("transport switch failed")
+            return await self._json(writer, {"ok": False, "error": str(exc)}, 500)
+
+    async def _serve_log(self, writer, params):
+        """Return the tail of the log file as plain text."""
+        from ..logging_setup import get_log_path
+        kb = int(_one(params, "kb", "64"))
+        path = get_log_path(self.manager.cfg.data_dir)
+        if not path.exists():
+            return await self._send(writer, 200, "text/plain",
+                                    b"(log file not created yet)")
+        try:
+            size = path.stat().st_size
+            with open(path, "rb") as fh:
+                if size > kb * 1024:
+                    fh.seek(size - kb * 1024)
+                data = fh.read()
+        except Exception as exc:
+            data = f"(could not read log: {exc})".encode()
+        return await self._send(writer, 200, "text/plain; charset=utf-8", data)
+
+    async def _serve_diagnostics_zip(self, writer):
+        from ..diagnostics import build_zip
+        try:
+            out = build_zip(self.manager.cfg)
+            data = Path(out).read_bytes()
+            Path(out).unlink(missing_ok=True)
+        except Exception as exc:
+            log.exception("diagnostics zip failed")
+            return await self._send(writer, 500, "text/plain",
+                                    f"diagnostics failed: {exc}".encode())
+        fname = f"kilovault_diagnostics_{int(time.time())}.zip"
+        await self._send(writer, 200, "application/zip", data,
+                         extra_headers={"Content-Disposition":
+                                        f'attachment; filename="{fname}"'})
 
     async def _export(self, writer, params):
         addr = _one(params, "address")

@@ -15,6 +15,8 @@
     <div class="status-pills">
       <span id="conn-pill" class="pill pill-idle">connecting…</span>
       <span id="transport-pill" class="pill">—</span>
+      <button id="btn-setup" class="pill pill-btn" title="Set up your connection">⚙ Setup</button>
+      <button id="btn-help" class="pill pill-btn" title="Help &amp; glossary">? Help</button>
       <span id="clock" class="pill pill-muted"></span>
     </div>
   </header>
@@ -24,14 +26,14 @@
   <!-- Whole-bank summary -->
   <section class="bank" id="bank">
     <div class="bank-grid">
-      <div class="metric big"><label>Bank SoC</label><div class="value" id="bank-soc">—</div><span class="unit">%</span></div>
-      <div class="metric"><label>Power</label><div class="value" id="bank-power">—</div><span class="unit">W</span></div>
-      <div class="metric"><label>Current</label><div class="value" id="bank-current">—</div><span class="unit">A</span></div>
-      <div class="metric"><label>Avg Voltage</label><div class="value" id="bank-voltage">—</div><span class="unit">V</span></div>
-      <div class="metric"><label>Remaining</label><div class="value" id="bank-remaining">—</div><span class="unit">Ah</span></div>
-      <div class="metric"><label>Capacity</label><div class="value" id="bank-capacity">—</div><span class="unit">Ah</span></div>
-      <div class="metric"><label>Batteries</label><div class="value" id="bank-count">—</div><span class="unit">online</span></div>
-      <div class="metric"><label>Cell Δ (bank)</label><div class="value" id="bank-delta">—</div><span class="unit">mV</span></div>
+      <div class="metric big"><label>Bank SoC <i class="tip" data-tip="State of Charge — how full the whole battery bank is, like a fuel gauge. 100% = full, 0% = empty.">i</i></label><div class="value" id="bank-soc">—</div><span class="unit">%</span></div>
+      <div class="metric"><label>Power <i class="tip" data-tip="How fast energy is flowing right now, in watts. Positive (green) = charging; negative (orange) = powering your loads.">i</i></label><div class="value" id="bank-power">—</div><span class="unit">W</span></div>
+      <div class="metric"><label>Current <i class="tip" data-tip="Total electrical current in/out of the bank, in amps. Positive = charging, negative = discharging.">i</i></label><div class="value" id="bank-current">—</div><span class="unit">A</span></div>
+      <div class="metric"><label>Avg Voltage <i class="tip" data-tip="Average pack voltage. A healthy 12V LiFePO4 rests near 13.3–13.4V when full and around 12.0–13.0V in use.">i</i></label><div class="value" id="bank-voltage">—</div><span class="unit">V</span></div>
+      <div class="metric"><label>Remaining <i class="tip" data-tip="Estimated amp-hours of charge left before empty (sum across all batteries).">i</i></label><div class="value" id="bank-remaining">—</div><span class="unit">Ah</span></div>
+      <div class="metric"><label>Capacity <i class="tip" data-tip="Total amp-hours when full, added up across all batteries in the bank.">i</i></label><div class="value" id="bank-capacity">—</div><span class="unit">Ah</span></div>
+      <div class="metric"><label>Batteries <i class="tip" data-tip="How many batteries are connected and reporting, out of the total the app knows about.">i</i></label><div class="value" id="bank-count">—</div><span class="unit">online</span></div>
+      <div class="metric"><label>Cell Δ (bank) <i class="tip" data-tip="The biggest voltage gap between any two cells across the whole bank. KiloVault says keep this under 300 mV. A large gap means a battery needs balancing or a full charge.">i</i></label><div class="value" id="bank-delta">—</div><span class="unit">mV</span></div>
     </div>
     <div class="bank-energy">
       <span>⚡ Charged this session: <b id="bank-wh-in">0</b> Wh</span>
@@ -44,10 +46,17 @@
     <button class="tab active" data-tab="live">Live</button>
     <button class="tab" data-tab="history">History</button>
     <button class="tab" data-tab="events">Events</button>
+    <button class="tab" data-tab="diag">Diagnostics</button>
   </nav>
 
   <!-- LIVE -->
   <section id="tab-live" class="tabpane active">
+    <div id="empty-hint" class="empty-hint hidden">
+      <h3>No batteries connected yet</h3>
+      <p>KiloVault batteries go to sleep when idle. Apply a load or a charger to
+         wake them, then they'll appear here automatically.</p>
+      <button class="btn" id="empty-setup">Open the setup wizard</button>
+    </div>
     <div id="battery-grid" class="battery-grid"></div>
   </section>
 
@@ -85,10 +94,51 @@
     </table>
   </section>
 
+  <!-- DIAGNOSTICS -->
+  <section id="tab-diag" class="tabpane">
+    <div class="diag-actions">
+      <button id="btn-bt-test" class="btn">📡 Run Bluetooth test</button>
+      <a class="btn btn-ghost" href="/api/log?kb=256" target="_blank" rel="noopener">⬇ Download log</a>
+      <a class="btn btn-ghost" href="/api/diagnostics.zip">⬇ Download diagnostics (.zip)</a>
+      <span class="diag-hint">Email the diagnostics .zip if you need help — it has no passwords.</span>
+    </div>
+    <div id="bt-test-result" class="bt-result hidden"></div>
+
+    <div class="diag-grid">
+      <div class="diag-card">
+        <h3>System</h3>
+        <table class="kv-table" id="diag-system"></table>
+      </div>
+      <div class="diag-card">
+        <h3>Batteries</h3>
+        <div id="diag-batteries"></div>
+      </div>
+    </div>
+
+    <div class="diag-card">
+      <h3>Common problems &amp; fixes</h3>
+      <div class="faq" id="diag-faq"></div>
+    </div>
+
+    <div class="diag-card">
+      <h3>Live log <small>(newest at the bottom)</small></h3>
+      <pre id="log-view" class="log-view">loading…</pre>
+    </div>
+  </section>
+
   <footer class="footer">
     Offline-first · No internet required · Data stored locally ·
     <span id="footer-version"></span>
   </footer>
+
+  <!-- Tooltip bubble (single, repositioned) -->
+  <div id="tooltip" class="tooltip hidden"></div>
+
+  <!-- Modal root for wizard / help -->
+  <div id="modal-root" class="modal-root hidden">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal" id="modal-box"></div>
+  </div>
 
   <script src="/static/charts.js"></script>
   <script src="/static/app.js"></script>
