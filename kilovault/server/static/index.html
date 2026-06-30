@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>KiloVault HLX+ Monitor</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">▰▱</span>
+      <h1>KiloVault HLX+ Monitor</h1>
+    </div>
+    <div class="status-pills">
+      <span id="conn-pill" class="pill pill-idle">connecting…</span>
+      <span id="transport-pill" class="pill">—</span>
+      <span id="clock" class="pill pill-muted"></span>
+    </div>
+  </header>
+
+  <div id="alarm-banner" class="alarm-banner hidden"></div>
+
+  <!-- Whole-bank summary -->
+  <section class="bank" id="bank">
+    <div class="bank-grid">
+      <div class="metric big"><label>Bank SoC</label><div class="value" id="bank-soc">—</div><span class="unit">%</span></div>
+      <div class="metric"><label>Power</label><div class="value" id="bank-power">—</div><span class="unit">W</span></div>
+      <div class="metric"><label>Current</label><div class="value" id="bank-current">—</div><span class="unit">A</span></div>
+      <div class="metric"><label>Avg Voltage</label><div class="value" id="bank-voltage">—</div><span class="unit">V</span></div>
+      <div class="metric"><label>Remaining</label><div class="value" id="bank-remaining">—</div><span class="unit">Ah</span></div>
+      <div class="metric"><label>Capacity</label><div class="value" id="bank-capacity">—</div><span class="unit">Ah</span></div>
+      <div class="metric"><label>Batteries</label><div class="value" id="bank-count">—</div><span class="unit">online</span></div>
+      <div class="metric"><label>Cell Δ (bank)</label><div class="value" id="bank-delta">—</div><span class="unit">mV</span></div>
+    </div>
+    <div class="bank-energy">
+      <span>⚡ Charged this session: <b id="bank-wh-in">0</b> Wh</span>
+      <span>🔋 Discharged: <b id="bank-wh-out">0</b> Wh</span>
+      <span>Temp range: <b id="bank-temp">—</b></span>
+    </div>
+  </section>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="live">Live</button>
+    <button class="tab" data-tab="history">History</button>
+    <button class="tab" data-tab="events">Events</button>
+  </nav>
+
+  <!-- LIVE -->
+  <section id="tab-live" class="tabpane active">
+    <div id="battery-grid" class="battery-grid"></div>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="tab-history" class="tabpane">
+    <div class="history-controls">
+      <label>Battery
+        <select id="hist-battery"></select>
+      </label>
+      <label>Window
+        <select id="hist-range">
+          <option value="15">15 min</option>
+          <option value="60">1 hour</option>
+          <option value="180" selected>3 hours</option>
+          <option value="720">12 hours</option>
+          <option value="1440">24 hours</option>
+          <option value="10080">7 days</option>
+        </select>
+      </label>
+      <button id="hist-refresh" class="btn">Refresh</button>
+      <a id="hist-export" class="btn btn-ghost" href="#">⬇ Export CSV</a>
+    </div>
+    <div class="chart-card"><h3>Voltage (V)</h3><canvas id="chart-voltage" height="180"></canvas></div>
+    <div class="chart-card"><h3>Current (A) &nbsp;<small>+charge / −discharge</small></h3><canvas id="chart-current" height="180"></canvas></div>
+    <div class="chart-card"><h3>State of Charge (%)</h3><canvas id="chart-soc" height="180"></canvas></div>
+    <div class="chart-card"><h3>Temperature (°C)</h3><canvas id="chart-temp" height="180"></canvas></div>
+    <div class="chart-card"><h3>Cell imbalance (mV)</h3><canvas id="chart-delta" height="180"></canvas></div>
+  </section>
+
+  <!-- EVENTS -->
+  <section id="tab-events" class="tabpane">
+    <table class="events-table">
+      <thead><tr><th>Time</th><th>Battery</th><th>Severity</th><th>Code</th><th>Message</th><th>Cleared</th></tr></thead>
+      <tbody id="events-body"></tbody>
+    </table>
+  </section>
+
+  <footer class="footer">
+    Offline-first · No internet required · Data stored locally ·
+    <span id="footer-version"></span>
+  </footer>
+
+  <script src="/static/charts.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

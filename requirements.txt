@@ -1,0 +1,13 @@
+# Runtime dependencies for the KiloVault HLX+ Monitor.
+#
+# The dashboard, simulator, logging and alarms run on the Python standard
+# library alone. The two packages below are only needed for real hardware:
+#
+#   bleak     - connect to batteries with the PC's own Bluetooth  (`serve`, `scan`)
+#   pyserial  - talk to an ESP32 serial bridge                    (`serve --serial`)
+#
+# Install everything:   pip install -r requirements.txt
+# Or just the core (no hardware):   no install needed, use `--simulate`.
+
+bleak>=0.21
+pyserial>=3.5

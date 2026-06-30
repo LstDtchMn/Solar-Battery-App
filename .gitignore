@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# App data
+*.db
+*.db-wal
+*.db-shm
+*.csv
+config.toml
+config.local.toml
+
+# PlatformIO
+firmware/esp32_bridge/.pio/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

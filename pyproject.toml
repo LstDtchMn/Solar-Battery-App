@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kilovault-monitor"
+version = "1.0.0"
+description = "Offline monitor for KiloVault HLX/HLX+ LiFePO4 batteries (BLE)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "KiloVault HLX+ Monitor contributors" }]
+keywords = ["kilovault", "hlx", "bms", "lifepo4", "ble", "solar", "battery"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: System :: Monitoring",
+]
+
+# The dashboard, simulator, logging and alarms need NOTHING beyond the standard
+# library. Bluetooth and the ESP32 serial bridge are opt-in extras.
+dependencies = []
+
+[project.optional-dependencies]
+ble = ["bleak>=0.21"]
+serial = ["pyserial>=3.5"]
+all = ["bleak>=0.21", "pyserial>=3.5"]
+dev = ["pytest>=7", "bleak>=0.21", "pyserial>=3.5"]
+
+[project.scripts]
+kvmon = "kilovault.cli:main"
+
+[project.urls]
+Documentation = "https://github.com/LstDtchMn/Solar-Battery-App/tree/main/docs"
+
+[tool.setuptools]
+packages = ["kilovault", "kilovault.transports", "kilovault.server"]
+
+[tool.setuptools.package-data]
+"kilovault.server" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
