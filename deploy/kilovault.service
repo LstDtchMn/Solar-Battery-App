@@ -1,0 +1,35 @@
+[Unit]
+Description=KiloVault HLX+ Monitor (dashboard + logger)
+Documentation=https://github.com/LstDtchMn/Solar-Battery-App/blob/main/docs/CABIN.md
+# Bluetooth is what we talk to; wait for the network so the LAN/phone view works.
+After=bluetooth.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+# Where config.toml, the history DB, and the log live.
+WorkingDirectory=/home/pi/kilovault
+# Run the monitor against the cabin config. Auto-restart keeps it alive
+# across battery sleep, Bluetooth hiccups, and unexpected exits.
+ExecStart=/usr/bin/python3 -m kilovault.cli -c /home/pi/kilovault/config.toml serve
+Restart=always
+RestartSec=5
+# Give the SD card a moment; don't hammer restarts in a crash loop.
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+# --- Hardening (safe for a headless logger that only reads its own dir) ---
+NoNewPrivileges=true
+ProtectSystem=full
+# The monitor writes only inside its data dir.
+ReadWritePaths=/home/pi/kilovault
+PrivateTmp=true
+
+# Keep the journal readable for `journalctl -u kilovault`.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

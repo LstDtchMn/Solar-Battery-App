@@ -34,6 +34,9 @@ from ..manager import Manager
 
 log = logging.getLogger(__name__)
 
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+mimetypes.add_type("image/svg+xml", ".svg")
+
 
 def _resolve_static_dir() -> Path:
     """Find the bundled static assets, including inside a PyInstaller .exe."""
@@ -61,13 +64,34 @@ class DashboardServer:
         # When exposed beyond loopback (e.g. --lan / 0.0.0.0), require a shared
         # token on every /api/* request so the LAN can't read data or control
         # the monitor without it. On loopback, no token (only this PC can reach).
-        import secrets
         self.token: Optional[str] = (
-            secrets.token_urlsafe(16) if host not in _LOOPBACK else None
+            self._resolve_token() if host not in _LOOPBACK else None
         )
         self._allowed_hosts = {"127.0.0.1", "localhost", "::1"}
         if host not in ("0.0.0.0", "::") and host not in self._allowed_hosts:
             self._allowed_hosts.add(host)
+
+    def _resolve_token(self) -> str:
+        """A stable access token: an explicit config value, else a persistent
+        auto-generated one stored in the data dir (so a phone's saved link keeps
+        working across restarts)."""
+        import secrets
+
+        cfgtok = (getattr(self.manager.cfg.web, "token", "") or "").strip()
+        if cfgtok:
+            return cfgtok
+        try:
+            p = Path(self.manager.cfg.data_dir) / ".web_token"
+            if p.exists():
+                existing = p.read_text().strip()
+                if existing:
+                    return existing
+            token = secrets.token_urlsafe(16)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(token)
+            return token
+        except Exception:
+            return secrets.token_urlsafe(16)
 
     async def start(self) -> None:
         self._server = await asyncio.start_server(self._handle, self.host, self.port)

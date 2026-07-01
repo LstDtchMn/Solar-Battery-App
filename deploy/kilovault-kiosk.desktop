@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=KiloVault Cabin Kiosk
+Comment=Full-screen battery dashboard on the touchscreen
+Exec=/home/pi/kilovault/deploy/kiosk.sh
+X-GNOME-Autostart-enabled=true
+# Autostarts on desktop login. Copied to ~/.config/autostart/ by install-pi.sh.
