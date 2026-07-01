@@ -107,8 +107,10 @@ async def _serve(cfg: Config) -> int:
             cfg.web.port = port
             break
         except OSError as exc:
-            busy = (exc.errno in (errno.EADDRINUSE, 98, 10048)
-                    or getattr(exc, "winerror", None) == 10048)
+            # EADDRINUSE, plus Windows WSAEACCES (10013) which start_server can
+            # raise for a reserved/excluded port — treat both as "try next".
+            busy = (exc.errno in (errno.EADDRINUSE, errno.EACCES, 98, 13, 10048, 10013)
+                    or getattr(exc, "winerror", None) in (10048, 10013))
             if not busy:
                 raise
             # If our own dashboard already answers on the requested port, don't
@@ -125,15 +127,18 @@ async def _serve(cfg: Config) -> int:
     await manager.start()
 
     host_display = "localhost" if cfg.web.host in ("127.0.0.1", "0.0.0.0", "::") else cfg.web.host
-    url = f"http://{host_display}:{cfg.web.port}/"
-    bind_url = f"http://{cfg.web.host}:{cfg.web.port}/"
+    # When exposed beyond loopback, the dashboard requires a one-time token that
+    # must be included in the URL — this keeps the LAN from reading/controlling it.
+    q = f"?token={server.token}" if server.token else ""
+    url = f"http://{host_display}:{cfg.web.port}/{q}"
     print("=" * 56)
     print(f"  KiloVault HLX+ Monitor  v{__version__}")
     print("=" * 56)
     print(f"  Open the dashboard:  {url}")
     if cfg.web.host in ("0.0.0.0", "::"):
-        print("  On your phone/tablet (same Wi-Fi): http://<this-PC-IP>:"
-              f"{cfg.web.port}/")
+        print(f"  On your phone/tablet (same Wi-Fi): http://<this-PC-IP>:{cfg.web.port}/{q}")
+        if server.token:
+            print("  (The token in the link is required — keep the link private.)")
     print(f"  Data + log folder:   {cfg.data_dir}")
     print(f"  Source / mode:       {cfg.transport.type}")
     print("  Close this window (or press Ctrl+C) to stop.")
@@ -142,8 +147,7 @@ async def _serve(cfg: Config) -> int:
     if cfg.web.open_browser:
         try:
             import webbrowser
-            webbrowser.open(bind_url if host_display != "localhost" else
-                            f"http://127.0.0.1:{cfg.web.port}/")
+            webbrowser.open(f"http://127.0.0.1:{cfg.web.port}/{q}")
         except Exception:
             pass
 
@@ -345,6 +349,11 @@ def _run(argv) -> int:
         cfg.data_dir = base
         cfg.db_path = base / "kilovault_history.db"
 
+    # Detect a duplicate launch BEFORE opening the rotating log handler (on
+    # Windows a second process holding the log open can break log rotation).
+    if cmd == "serve" and _dashboard_responding(cfg.web.port):
+        return _handle_already_running(cfg.web.port)
+
     from .logging_setup import setup_logging, log_environment
 
     log_path = setup_logging(cfg.data_dir)
@@ -381,8 +390,10 @@ def main(argv=None) -> int:
         return 1
     finally:
         # When launched by double-clicking the .exe, keep the window open so the
-        # user can read any message instead of it vanishing instantly.
-        if frozen:
+        # user can read any message instead of it vanishing instantly. Only do
+        # this for an interactive console — never for a scheduled task / service
+        # / piped run, where input() would hang forever.
+        if frozen and sys.stdin is not None and sys.stdin.isatty():
             try:
                 input("\nPress Enter to close this window...")
             except Exception:

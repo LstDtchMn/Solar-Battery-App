@@ -115,9 +115,10 @@ class SerialBridgeTransport(Transport):
             addr, _, hexframe = rest.partition(" ")
             await self._handle_frame(addr, hexframe)
         elif tag == "S":
+            from .ble import _clean_name  # pure helper; does not import bleak
             addr, _, name = rest.partition(" ")
             st = self._states.setdefault(addr, ConnectionState(address=addr))
-            st.name = name or st.name
+            st.name = _clean_name(name) or st.name
             st.connected = True
             st.last_seen = time.time()
             await self._emit_state(st)
@@ -149,3 +150,12 @@ class SerialBridgeTransport(Transport):
     async def stop(self) -> None:
         self._running = False
         self._stop_flag.set()
+        # Join the reader thread so the serial port + thread are fully released
+        # before returning (a hot-swap onto the same port could otherwise collide).
+        t = self._reader_thread
+        if t is not None and t.is_alive():
+            try:
+                await asyncio.get_running_loop().run_in_executor(None, t.join, 2.0)
+            except Exception:
+                pass
+        self._reader_thread = None

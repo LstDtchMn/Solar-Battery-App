@@ -35,6 +35,7 @@ class Manager:
         self._last_log: Dict[str, float] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._collector_task: Optional[asyncio.Task] = None
+        self._housekeeping_task: Optional[asyncio.Task] = None
         self.transport = build_transport(
             config.transport, self._on_sample, self._on_state
         )
@@ -64,6 +65,10 @@ class Manager:
         if st.name and st.name != sample.address:
             sample.name = st.name
         st.update(sample)
+        # Reconcile the sample to the user's capacity override so remaining-Ah,
+        # the bank totals, the UI and the stored/exported rows all agree.
+        if st.capacity_override is not None:
+            sample.total_capacity = st.capacity_override
 
         # Alarm evaluation touches storage (event log); never let a transient
         # error there escape and kill the collector.
@@ -209,6 +214,8 @@ class Manager:
             st.sample.name = name
 
     def set_capacity(self, address: str, capacity_ah: float) -> None:
+        if not capacity_ah or capacity_ah <= 0:
+            raise ValueError("capacity must be greater than 0")
         self.storage.set_device_capacity(address, capacity_ah)
         st = self._state_for(address)
         st.capacity_override = capacity_ah
@@ -220,6 +227,22 @@ class Manager:
         self._loop = asyncio.get_running_loop()
         log.info("Starting collector (transport=%s)", self.cfg.transport.type)
         self._collector_task = asyncio.ensure_future(self._run_transport())
+        if self.cfg.retention_days and self.cfg.retention_days > 0:
+            self._housekeeping_task = asyncio.ensure_future(self._housekeeping())
+
+    async def _housekeeping(self) -> None:
+        """Periodically prune old history so the DB doesn't grow forever."""
+        while True:
+            try:
+                deleted = self.storage.prune(self.cfg.retention_days)
+                if deleted:
+                    log.info("Pruned %d history rows older than %.0f days",
+                             deleted, self.cfg.retention_days)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.debug("prune failed", exc_info=True)
+            await asyncio.sleep(6 * 3600)
 
     async def _run_transport(self) -> None:
         try:
@@ -255,12 +278,13 @@ class Manager:
             await self._collector_task
 
     async def stop(self) -> None:
-        if self._collector_task:
-            self._collector_task.cancel()
-            try:
-                await self._collector_task
-            except (asyncio.CancelledError, Exception):
-                pass
+        for task in (self._collector_task, self._housekeeping_task):
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
         try:
             await self.transport.stop()
         except Exception:

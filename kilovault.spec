@@ -7,7 +7,9 @@
 # The static dashboard assets are bundled, and bleak's platform backend is
 # collected so Bluetooth works inside the frozen build.
 
-from PyInstaller.utils.hooks import collect_all
+import sys
+
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 datas = [("kilovault/server/static", "kilovault/server/static")]
 binaries = []
@@ -22,6 +24,22 @@ for pkg in ("bleak", "serial"):
         hiddenimports += h
     except Exception:
         pass
+
+# On Windows, bleak's BLE backend uses WinRT projections that collect_all does
+# not always discover. Pull them in explicitly so BLE works in the frozen .exe.
+if sys.platform == "win32":
+    for pkg in ("winrt", "bleak_winrt"):
+        try:
+            hiddenimports += collect_submodules(pkg)
+        except Exception:
+            pass
+    hiddenimports += [
+        "winrt.windows.devices.bluetooth",
+        "winrt.windows.devices.bluetooth.advertisement",
+        "winrt.windows.devices.bluetooth.genericattributeprofile",
+        "winrt.windows.foundation",
+        "winrt.windows.storage.streams",
+    ]
 
 block_cipher = None
 

@@ -73,6 +73,7 @@ class Config:
     data_dir: Path = field(default_factory=lambda: Path.cwd())
     db_path: Path = field(default_factory=lambda: Path.cwd() / DEFAULT_DB_NAME)
     log_interval: float = 10.0  # seconds between persisted history rows
+    retention_days: float = 90.0  # history older than this is pruned (0 = keep all)
     transport: TransportConfig = field(default_factory=TransportConfig)
     alarms: AlarmConfig = field(default_factory=AlarmConfig)
     web: WebConfig = field(default_factory=WebConfig)
@@ -99,6 +100,7 @@ class Config:
             else cfg.data_dir / DEFAULT_DB_NAME
         )
         cfg.log_interval = float(app.get("log_interval", cfg.log_interval))
+        cfg.retention_days = float(app.get("retention_days", cfg.retention_days))
 
         cfg.transport = _merge(TransportConfig(), raw.get("transport", {}))
         cfg.alarms = _merge(AlarmConfig(), raw.get("alarms", {}))
@@ -128,6 +130,7 @@ CONFIG_TEMPLATE = """\
 # Where the history database and exports are stored.
 # data_dir = "C:/Users/you/kilovault"
 log_interval = 10          # seconds between rows written to history
+retention_days = 90        # delete history older than this (0 = keep everything)
 
 [transport]
 type = "ble"               # "ble" | "serial" | "simulator"

@@ -87,11 +87,15 @@ class Notifier:
                 )
             elif self._is_windows:
                 # PowerShell balloon tip; fully offline, no extra packages.
+                # Escape single quotes (double them) so an apostrophe in the
+                # message can't break out of the PS string literal or inject.
+                t = title.replace("'", "''")
+                m = alarm.message.replace("'", "''")
                 ps = (
                     "[reflection.assembly]::loadwithpartialname('System.Windows.Forms')"
                     "|Out-Null;$n=New-Object System.Windows.Forms.NotifyIcon;"
                     "$n.Icon=[System.Drawing.SystemIcons]::Warning;$n.Visible=$true;"
-                    f"$n.ShowBalloonTip(8000,'{title}','{alarm.message}',"
+                    f"$n.ShowBalloonTip(8000,'{t}','{m}',"
                     "[System.Windows.Forms.ToolTipIcon]::Warning)"
                 )
                 subprocess.Popen(
@@ -126,10 +130,11 @@ class AlarmEngine:
         addr = state.address
         now = time.time()
 
-        # Raise newly-active alarms / re-notify on the repeat interval. A record
-        # lingers (``cleared`` set) for ``repeat_seconds`` after it clears, so a
-        # condition that flaps across a threshold is throttled instead of
-        # spamming notifications and duplicate event rows.
+        # Invariant: while a record exists, its event row stays OPEN. A record
+        # lingers (``cleared`` set) for ``repeat_seconds`` after the condition
+        # goes away, so brief flapping across a threshold is throttled instead of
+        # spamming notifications and duplicate event rows. The event is closed
+        # exactly once, when the record is finally forgotten.
         for code, alarm in current.items():
             key = (addr, code)
             rec = self._active.get(key)
@@ -141,34 +146,25 @@ class AlarmEngine:
                 self._active[key] = {"event_id": event_id, "raised": now,
                                      "last_notify": now, "cleared": None}
                 self.notifier.notify(alarm)
-            elif rec.get("cleared") is not None:
-                # Re-activating a recently-cleared alarm: only re-notify / open a
-                # new event once the repeat interval has elapsed.
+            else:
+                # Already tracked (active, or cooling down after a brief clear):
+                # the same open event continues; re-notify only on the interval.
+                rec["cleared"] = None
                 if now - rec["last_notify"] >= self.cfg.repeat_seconds:
-                    rec["event_id"] = (
-                        self.storage.raise_event(addr, code, alarm.severity, alarm.message)
-                        if self.storage else None
-                    )
                     rec["last_notify"] = now
                     self.notifier.notify(alarm)
-                rec["cleared"] = None
-            elif now - rec["last_notify"] >= self.cfg.repeat_seconds:
-                rec["last_notify"] = now
-                self.notifier.notify(alarm)
 
-        # Transition no-longer-active alarms to "cleared", and forget records
-        # whose cooldown has fully elapsed.
+        # Start the cooldown for no-longer-active alarms; close+forget the event
+        # only once the cooldown has fully elapsed.
         for key in list(self._active):
-            if key[0] != addr:
+            if key[0] != addr or key[1] in current:
                 continue
             rec = self._active[key]
-            if key[1] in current:
-                continue
             if rec.get("cleared") is None:
+                rec["cleared"] = now  # keep the event open during the cooldown
+            elif now - rec["cleared"] >= self.cfg.repeat_seconds:
                 if self.storage and rec.get("event_id"):
                     self.storage.clear_event(rec["event_id"])
-                rec["cleared"] = now
-            elif now - rec["cleared"] >= self.cfg.repeat_seconds:
                 del self._active[key]
 
         return list(current.values())

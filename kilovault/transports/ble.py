@@ -179,6 +179,13 @@ class BleTransport(Transport):
             except (asyncio.CancelledError, Exception):
                 pass
         self._tasks.clear()
+        # Drain in-flight emit tasks so no late sample from the old transport
+        # runs after stop()/hot-swap (which would double-count energy).
+        for t in list(self._pending):
+            t.cancel()
+        if self._pending:
+            await asyncio.gather(*self._pending, return_exceptions=True)
+        self._pending.clear()
 
     # ------------------------------------------------------------------
     async def _supervise(self, address: str) -> None:

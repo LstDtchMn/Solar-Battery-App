@@ -7,6 +7,14 @@
   const batteries = {};   // address -> latest battery dict
   let bankState = {};
 
+  // When the dashboard is exposed on the LAN, the page URL carries a token that
+  // every request must include. On localhost there's no token. U() appends it.
+  const TOKEN = new URLSearchParams(location.search).get("token") || "";
+  function U(path) {
+    if (!TOKEN) return path;
+    return path + (path.indexOf("?") >= 0 ? "&" : "?") + "token=" + encodeURIComponent(TOKEN);
+  }
+
   // ---- tabs ---------------------------------------------------------
   document.querySelectorAll(".tab").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -24,7 +32,7 @@
 
   // ---- SSE ----------------------------------------------------------
   function connect() {
-    const es = new EventSource("/api/stream");
+    const es = new EventSource(U("/api/stream"));
     es.onopen = () => setConn(true);
     es.onerror = () => { setConn(false); };
     es.onmessage = (e) => {
@@ -54,7 +62,7 @@
   // periodically pull a fresh snapshot to keep bank totals & events exact
   setInterval(async () => {
     try {
-      const r = await fetch("/api/snapshot");
+      const r = await fetch(U("/api/snapshot"));
       const s = await r.json();
       bankState = s.bank;
       (s.batteries || []).forEach((b) => { batteries[b.address] = b; });
@@ -98,11 +106,15 @@
     renderAlarmBanner(b.alarms || []);
   }
 
+  const WARN_ALARMS = ["HTC", "HTD", "LTC", "LTD", "CELL_IMBALANCE", "TEMP_HIGH", "TEMP_LOW", "SOC_LOW"];
   function renderAlarmBanner(alarms) {
     const el = $("alarm-banner");
     if (!alarms.length) { el.classList.add("hidden"); return; }
     el.classList.remove("hidden");
-    el.classList.remove("warn");
+    // Warning (amber) styling only when every active alarm is warning-level;
+    // any critical alarm keeps the red banner.
+    const allWarn = alarms.every((a) => WARN_ALARMS.includes(a));
+    el.classList.toggle("warn", allWarn);
     el.textContent = "⚠ Active alarms: " + alarms.join(", ");
   }
 
@@ -243,7 +255,7 @@
     const cur = (batteries[address] || {}).name || address;
     const name = prompt("Rename battery", cur);
     if (name == null || !name.trim()) return;
-    await fetch("/api/rename", {
+    await fetch(U("/api/rename"), {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ address, name: name.trim() }),
     });
@@ -268,10 +280,10 @@
     const addr = $("hist-battery").value;
     const minutes = $("hist-range").value;
     if (!addr) return;
-    $("hist-export").href = `/api/export.csv?address=${encodeURIComponent(addr)}&minutes=${minutes}`;
+    $("hist-export").href = U(`/api/export.csv?address=${encodeURIComponent(addr)}&minutes=${minutes}`);
     let data;
     try {
-      const r = await fetch(`/api/history?address=${encodeURIComponent(addr)}&minutes=${minutes}`);
+      const r = await fetch(U(`/api/history?address=${encodeURIComponent(addr)}&minutes=${minutes}`));
       data = await r.json();
     } catch (_) { return; }
     const rows = data.rows || [];
@@ -292,7 +304,7 @@
   // ---- events -------------------------------------------------------
   async function loadEvents() {
     let data;
-    try { data = await (await fetch("/api/events?limit=200")).json(); }
+    try { data = await (await fetch(U("/api/events?limit=200"))).json(); }
     catch (_) { return; }
     const tb = $("events-body"); tb.innerHTML = "";
     (data.events || []).forEach((e) => {
@@ -465,25 +477,33 @@
     $("wiz-back").onclick = () => { wizState.step = 1; renderWizard(); };
 
     let pf = {};
-    try { pf = await (await fetch("/api/preflight")).json(); } catch (_) {}
+    try { pf = await (await fetch(U("/api/preflight"))).json(); } catch (_) {}
     const checks = [];
+    let hardFail = false;
     if (wizState.method === "ble") {
       const bt = pf.bluetooth || {};
-      checks.push(bt.installed
-        ? ok(`Bluetooth support installed (bleak ${esc(bt.version || "")})`)
-        : bad("Bluetooth support not installed", "Run: pip install bleak — or use the demo / an ESP32."));
+      if (bt.installed) {
+        checks.push(ok(`Bluetooth support installed (bleak ${esc(bt.version || "")})`));
+      } else {
+        hardFail = true;
+        checks.push(bad("Bluetooth support not installed", "Run: pip install bleak — or use the demo / an ESP32."));
+      }
       checks.push(info("Wake your batteries", "Apply a load or charger so they advertise over Bluetooth."));
     } else if (wizState.method === "serial") {
       const ports = pf.serial_ports || [];
-      checks.push((pf.serial && pf.serial.installed)
-        ? ok("Serial support installed (pyserial)")
-        : bad("Serial support not installed", "Run: pip install pyserial"));
+      if (pf.serial && pf.serial.installed) {
+        checks.push(ok("Serial support installed (pyserial)"));
+      } else {
+        hardFail = true;
+        checks.push(bad("Serial support not installed", "Run: pip install pyserial"));
+      }
       if (ports.length) {
         const opts = ports.map((p) => `<option value="${esc(p.device)}">${esc(p.device)} — ${esc(p.description || "")}</option>`).join("");
         checks.push(`<div class="check-row"><span class="check-badge check-ok">✓</span>
           <div><div class="ct">Found ${ports.length} serial port(s)</div>
           <div class="cd">Pick your ESP32: <select id="wiz-port">${opts}</select></div></div></div>`);
       } else {
+        hardFail = true;
         checks.push(bad("No serial ports found", "Plug in the ESP32 over USB and try again."));
       }
     } else {
@@ -491,15 +511,28 @@
     }
     $("wiz-checks").innerHTML = checks.join("");
     const go = $("wiz-go");
-    go.disabled = false;
+    go.disabled = hardFail;  // can't continue if a required dependency is missing
     go.onclick = async () => {
-      go.disabled = true; go.textContent = "Starting…";
+      go.disabled = true; const label = go.textContent; go.textContent = "Starting…";
       const body = { type: wizState.method };
       const portSel = $("wiz-port");
       if (wizState.method === "serial" && portSel) body.serial_port = portSel.value;
       if (wizState.method === "simulator") body.sim_batteries = 2;
-      try { await fetch("/api/transport", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); } catch (_) {}
-      wizState.step = 3; renderWizard();
+      let okResp = false;
+      try {
+        const r = await fetch(U("/api/transport"), { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const j = await r.json().catch(() => ({}));
+        okResp = r.ok && j.ok !== false;
+        if (!okResp && !$("wiz-err")) {
+          const div = document.createElement("div");
+          div.id = "wiz-err";
+          div.innerHTML = bad("Could not start that source", esc((j && j.error) || "Please try again or pick another option."));
+          $("wiz-checks").appendChild(div);
+        }
+      } catch (e) { okResp = false; }
+      if (okResp) { wizState.step = 3; renderWizard(); }
+      else { go.disabled = false; go.textContent = label; }
     };
   }
   function methodName(m) { return m === "ble" ? "this PC's Bluetooth" : m === "serial" ? "an ESP32 adapter" : "the demo"; }
@@ -518,7 +551,7 @@
   function openDiag() { refreshDiag(); refreshLog(); }
   async function refreshDiag() {
     let d = {};
-    try { d = await (await fetch("/api/diagnostics")).json(); } catch (_) { return; }
+    try { d = await (await fetch(U("/api/diagnostics"))).json(); } catch (_) { return; }
     const sys = [
       ["App version", d.version], ["System", d.platform], ["Python", d.python],
       ["Data source", d.transport],
@@ -548,7 +581,7 @@
   }
   async function refreshLog() {
     try {
-      const txt = await (await fetch("/api/log?kb=64")).text();
+      const txt = await (await fetch(U("/api/log?kb=64"))).text();
       const el = $("log-view"); el.textContent = txt; el.scrollTop = el.scrollHeight;
     } catch (_) {}
   }
@@ -564,7 +597,7 @@
     box.className = "bt-result"; box.classList.remove("hidden");
     box.innerHTML = `<span class="spinner"></span> Scanning for ~5 seconds…`;
     let r = {};
-    try { r = await (await fetch("/api/test-bluetooth?timeout=5", { method: "POST" })).json(); } catch (e) { r = { ok: false, error: String(e) }; }
+    try { r = await (await fetch(U("/api/test-bluetooth?timeout=5"), { method: "POST" })).json(); } catch (e) { r = { ok: false, error: String(e) }; }
     if (!r.ok) {
       box.className = "bt-result bad";
       box.innerHTML = `<b>✗ Bluetooth test failed.</b><br>${esc(r.error || "Unknown error")}` +
@@ -603,8 +636,12 @@
     if (btn.dataset.tab === "diag") diagTimer = setInterval(() => { refreshDiag(); refreshLog(); }, 4000);
   }));
 
+  // Token-aware download links (Diagnostics tab).
+  const dlLog = $("dl-log"); if (dlLog) dlLog.href = U("/api/log?kb=256");
+  const dlDiag = $("dl-diag"); if (dlDiag) dlDiag.href = U("/api/diagnostics.zip");
+
   // boot
-  fetch("/api/snapshot").then((r) => r.json()).then((s) => {
+  fetch(U("/api/snapshot")).then((r) => r.json()).then((s) => {
     $("transport-pill").textContent = s.transport || "—";
     $("footer-version").textContent = "";
     // First run: greet new users with the setup wizard.

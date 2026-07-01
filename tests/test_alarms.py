@@ -113,6 +113,42 @@ def test_cleared_alarm_not_reported_active():
     assert "SOC_LOW" not in eng.active_for("AA")
 
 
+class FakeStorage:
+    def __init__(self):
+        self.opened = []
+        self.cleared = []
+        self._id = 0
+
+    def raise_event(self, addr, code, sev, msg):
+        self._id += 1
+        self.opened.append((self._id, addr, code))
+        return self._id
+
+    def clear_event(self, eid):
+        self.cleared.append(eid)
+
+
+def test_alarm_event_stays_open_through_brief_flap():
+    fs = FakeStorage()
+    eng = AlarmEngine(AlarmConfig(), storage=fs, notifier=SilentNotifier())
+    eng.evaluate(state_with(soc=12.0))     # raise event #1
+    assert len(fs.opened) == 1 and fs.cleared == []
+    eng.evaluate(state_with(soc=25.0))     # clears -> cooldown, event NOT closed
+    assert fs.cleared == []
+    eng.evaluate(state_with(soc=12.0))     # re-active within cooldown: no new event
+    assert len(fs.opened) == 1 and fs.cleared == []
+
+
+def test_alarm_event_closed_once_after_cooldown():
+    fs = FakeStorage()
+    eng = AlarmEngine(AlarmConfig(repeat_seconds=0), storage=fs, notifier=SilentNotifier())
+    eng.evaluate(state_with(soc=12.0))     # raise
+    eng.evaluate(state_with(soc=25.0))     # start cooldown (0s)
+    eng.evaluate(state_with(soc=25.0))     # cooldown elapsed -> close + forget
+    assert fs.cleared == [1]
+    assert "SOC_LOW" not in eng.active_for("AA")
+
+
 def test_no_alarms_when_disabled():
     cfg = AlarmConfig(enabled=False)
     eng = AlarmEngine(cfg, storage=None, notifier=SilentNotifier())
