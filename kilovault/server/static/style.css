@@ -277,3 +277,8 @@ canvas { width: 100%; display: block; }
 .thr-row input { background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
   border-radius: 8px; padding: .45rem .55rem; font-size: .9rem; }
 .thr-row small { color: var(--muted); }
+
+.summary-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.summary-table th, .summary-table td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid var(--line); }
+.summary-table th { color: var(--muted); font-weight: 600; }
+.summary-table td:first-child { font-weight: 600; }

@@ -183,6 +183,16 @@ class DashboardServer:
         if method == "GET" and path == "/api/history":
             return await self._history(writer, params)
 
+        if method == "GET" and path == "/api/summary":
+            addr = _one(params, "address")
+            if not addr:
+                return await self._json(writer, {"error": "address required"}, 400)
+            days = _num(params, "days", 30, int, 1, 366)
+            return await self._json(writer, {
+                "address": addr,
+                "days": self.manager.storage.daily_summary(addr, days),
+            })
+
         if method == "GET" and path == "/api/events":
             addr = _one(params, "address")
             limit = _num(params, "limit", 200, int, 1, 2000)

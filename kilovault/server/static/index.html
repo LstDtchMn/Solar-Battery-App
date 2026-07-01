@@ -86,6 +86,14 @@
     <div class="chart-card"><h3>State of Charge (%)</h3><canvas id="chart-soc" height="180"></canvas></div>
     <div class="chart-card"><h3>Temperature (°C)</h3><canvas id="chart-temp" height="180"></canvas></div>
     <div class="chart-card"><h3>Cell imbalance (mV)</h3><canvas id="chart-delta" height="180"></canvas></div>
+    <div class="chart-card">
+      <h3>Daily summary</h3>
+      <table class="summary-table">
+        <thead><tr><th>Day</th><th>SoC min/max</th><th>Voltage min/max</th>
+          <th>Temp min/max</th><th>Charged</th><th>Discharged</th></tr></thead>
+        <tbody id="summary-body"></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- EVENTS -->

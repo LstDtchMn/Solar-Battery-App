@@ -233,6 +233,39 @@ class Storage:
             rows = self._conn.execute(q, args + [limit]).fetchall()
         return [dict(r) for r in reversed(rows)]
 
+    def daily_summary(self, address: str, days: int = 30) -> List[dict]:
+        """Per-day rollup for one battery (local time), newest first.
+
+        Energy in/out per day is approximated from the mean charge/discharge
+        power over the day multiplied by the span the samples cover.
+        """
+        q = (
+            "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS day, "
+            "COUNT(*) n, MIN(voltage) min_v, MAX(voltage) max_v, AVG(voltage) avg_v, "
+            "MIN(soc) min_soc, MAX(soc) max_soc, "
+            "MIN(temperature) min_t, MAX(temperature) max_t, "
+            "AVG(CASE WHEN power > 0 THEN power ELSE 0 END) avg_chg, "
+            "AVG(CASE WHEN power < 0 THEN -power ELSE 0 END) avg_dis, "
+            "(MAX(ts) - MIN(ts)) / 3600.0 span_h "
+            "FROM samples WHERE address=? GROUP BY day ORDER BY day DESC LIMIT ?"
+        )
+        with self._lock:
+            rows = self._conn.execute(q, (address, days)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            span = d.pop("span_h") or 0.0
+            d["wh_charged"] = round((d.pop("avg_chg") or 0.0) * span, 1)
+            d["wh_discharged"] = round((d.pop("avg_dis") or 0.0) * span, 1)
+            for k in ("min_v", "max_v", "avg_v", "min_t", "max_t"):
+                if d.get(k) is not None:
+                    d[k] = round(d[k], 2)
+            for k in ("min_soc", "max_soc"):
+                if d.get(k) is not None:
+                    d[k] = round(d[k])
+            out.append(d)
+        return out
+
     def latest(self, address: str) -> Optional[dict]:
         with self._lock:
             row = self._conn.execute(

@@ -121,6 +121,24 @@ def test_thresholds_roundtrip(store):
     assert store.get_thresholds("AA") == {}
 
 
+def test_daily_summary(store):
+    base = time.time() - 3600
+    for i in range(60):
+        s = make_sample(ts=base + i * 60, soc=50 + (i % 10))
+        s.voltage = 13.0 + (i % 5) * 0.1
+        s.current = 10.0 if i % 2 == 0 else -8.0
+        s.temperature = 20.0 + (i % 4)
+        store.insert_sample(s)
+    days = store.daily_summary("AA", days=7)
+    assert days  # at least one day
+    d = days[0]
+    assert d["n"] == 60
+    assert d["min_v"] <= d["max_v"]
+    assert d["min_soc"] <= d["max_soc"]
+    assert "wh_charged" in d and "wh_discharged" in d
+    assert d["wh_charged"] >= 0 and d["wh_discharged"] >= 0
+
+
 def test_stats(store):
     base = time.time()
     for i, v in enumerate([12.0, 13.0, 14.0]):

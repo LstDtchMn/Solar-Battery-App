@@ -344,6 +344,37 @@
     KVCharts.lineChart($("chart-soc"), [{ name: "%", color: "#ffb23e", points: col("soc") }], { unit: "%", fixedMin: 0, fixedMax: 100 });
     KVCharts.lineChart($("chart-temp"), [{ name: "°C", color: "#ff8a5b", points: col("temperature") }], { unit: "°C" });
     KVCharts.lineChart($("chart-delta"), [{ name: "mV", color: "#b58bff", points: rows.map((r) => [r.ts, (r.cell_delta || 0) * 1000]) }], { unit: "mV", fixedMin: 0 });
+    loadSummary(addr);
+  }
+
+  async function loadSummary(addr) {
+    const tb = $("summary-body");
+    if (!tb) return;
+    let data;
+    try {
+      data = await (await fetch(U(`/api/summary?address=${encodeURIComponent(addr)}&days=30`))).json();
+    } catch (_) { return; }
+    tb.innerHTML = "";
+    (data.days || []).forEach((d) => {
+      const tr = document.createElement("tr");
+      const cells = [
+        d.day,
+        `${fmt(d.min_soc, 0)}–${fmt(d.max_soc, 0)}%`,
+        `${fmt(d.min_v, 2)}–${fmt(d.max_v, 2)} V`,
+        `${fmt(d.min_t, 1)}–${fmt(d.max_t, 1)} °C`,
+        `${fmt(d.wh_charged, 0)} Wh`,
+        `${fmt(d.wh_discharged, 0)} Wh`,
+      ];
+      cells.forEach((t) => {
+        const td = document.createElement("td");
+        td.textContent = t;
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    if (!(data.days || []).length) {
+      tb.innerHTML = '<tr><td colspan="6" class="diag-hint">No history yet.</td></tr>';
+    }
   }
   $("hist-refresh").addEventListener("click", loadHistory);
   $("hist-battery").addEventListener("change", loadHistory);
