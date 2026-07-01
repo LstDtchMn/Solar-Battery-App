@@ -122,11 +122,16 @@ class AlarmEngine:
         self._active: Dict[Tuple[str, str], dict] = {}
 
     # ------------------------------------------------------------------
-    def evaluate(self, state: BatteryState) -> List[Alarm]:
-        """Update alarm state for one battery; return its active alarms."""
-        if not self.cfg.enabled or state.sample is None:
+    def evaluate(self, state: BatteryState, cfg: Optional[AlarmConfig] = None) -> List[Alarm]:
+        """Update alarm state for one battery; return its active alarms.
+
+        ``cfg`` lets the caller pass a per-battery threshold config; it falls
+        back to the global config.
+        """
+        cfg = cfg or self.cfg
+        if not cfg.enabled or state.sample is None:
             return []
-        current = {a.code: a for a in self._conditions(state)}
+        current = {a.code: a for a in self._conditions(state, cfg)}
         addr = state.address
         now = time.time()
 
@@ -183,10 +188,10 @@ class AlarmEngine:
         ]
 
     # ------------------------------------------------------------------
-    def _conditions(self, state: BatteryState) -> List[Alarm]:
+    def _conditions(self, state: BatteryState, cfg: Optional[AlarmConfig] = None) -> List[Alarm]:
         s = state.sample
         addr = state.address
-        cfg = self.cfg
+        cfg = cfg or self.cfg
         out: List[Alarm] = []
 
         # 1) BMS protection flags.

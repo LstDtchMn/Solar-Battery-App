@@ -221,6 +221,23 @@ class DashboardServer:
             self.manager.rename(data.get("address", ""), data.get("name", ""))
             return await self._json(writer, {"ok": True})
 
+        if method == "POST" and path == "/api/reset-counters":
+            data = _json_body(body)
+            self.manager.reset_counters(data.get("address") or None)
+            return await self._json(writer, {"ok": True})
+
+        if method == "GET" and path == "/api/thresholds":
+            addr = _one(params, "address")
+            return await self._json(writer, {
+                "global": self.manager.global_thresholds(),
+                "overrides": self.manager.get_thresholds(addr) if addr else {},
+            })
+
+        if method == "POST" and path == "/api/thresholds":
+            data = _json_body(body)
+            self.manager.set_thresholds(data.get("address", ""), data.get("overrides", {}))
+            return await self._json(writer, {"ok": True})
+
         if method == "POST" and path == "/api/capacity":
             data = _json_body(body)
             try:

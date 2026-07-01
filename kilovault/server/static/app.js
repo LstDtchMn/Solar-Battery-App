@@ -103,6 +103,8 @@
     setText("bank-wh-in", fmt(b.wh_charged, 0));
     setText("bank-wh-out", fmt(b.wh_discharged, 0));
     setText("bank-temp", (b.min_temperature != null) ? `${b.min_temperature}–${b.max_temperature} °C` : "—");
+    const sinces = Object.values(batteries).map((x) => x.since_ts).filter(Boolean);
+    setText("bank-since", sinces.length ? "since " + new Date(Math.min(...sinces) * 1000).toLocaleDateString() : "");
     renderAlarmBanner(b.alarms || []);
   }
 
@@ -138,7 +140,7 @@
     card.id = "card-" + cssId(bat.address);
     card.innerHTML = `
       <div class="card-head">
-        <div class="card-name"><span class="nm"></span><span class="edit" title="Rename">✎</span></div>
+        <div class="card-name"><span class="nm"></span><span class="edit" title="Rename">✎</span><span class="cfg" title="Alarm thresholds">⚙</span></div>
         <span class="state-tag"></span>
       </div>
       <div class="soc-row">
@@ -165,6 +167,7 @@
       <div class="alarm-chips"></div>
       <div class="card-foot"><span class="conn"></span><span class="meta"></span></div>`;
     card.querySelector(".edit").addEventListener("click", () => doRename(bat.address));
+    card.querySelector(".cfg").addEventListener("click", () => openThresholds(bat.address));
     return card;
   }
 
@@ -261,6 +264,54 @@
     });
     if (batteries[address]) batteries[address].name = name.trim();
     renderCards(); populateBatterySelect();
+  }
+
+  // ---- per-battery alarm thresholds ---------------------------------
+  const THRESHOLD_FIELDS = [
+    ["soc_low", "Low state-of-charge warning", "%"],
+    ["soc_critical", "Critical state-of-charge", "%"],
+    ["temp_high", "High temperature", "°C"],
+    ["temp_low", "Low temperature", "°C"],
+    ["voltage_high", "High pack voltage", "V"],
+    ["voltage_low", "Low pack voltage", "V"],
+    ["cell_delta_warn", "Cell imbalance warning", "V"],
+    ["cell_delta_critical", "Cell imbalance critical", "V"],
+  ];
+  async function openThresholds(address) {
+    const bat = batteries[address] || {};
+    let data = { global: {}, overrides: {} };
+    try {
+      data = await (await fetch(U(`/api/thresholds?address=${encodeURIComponent(address)}`))).json();
+    } catch (_) {}
+    const g = data.global || {}, ov = data.overrides || {};
+    const rows = THRESHOLD_FIELDS.map(([f, label, unit]) =>
+      `<label class="thr-row"><span>${esc(label)} <small>(${esc(unit)})</small></span>
+        <input type="number" step="any" data-f="${f}" value="${ov[f] != null ? esc(ov[f]) : ""}"
+               placeholder="${g[f] != null ? esc(g[f]) : ""}"></label>`).join("");
+    openModal(`
+      <button class="close-x">×</button>
+      <h2>Alarm thresholds</h2>
+      <p class="sub">For <b>${esc(bat.name || address)}</b>. Leave a field blank to use
+        the global default (shown greyed as the placeholder).</p>
+      <div class="thr-grid">${rows}</div>
+      <div class="wiz-actions">
+        <button class="btn btn-ghost" id="thr-reset">Clear overrides</button>
+        <button class="btn" id="thr-save">Save</button>
+      </div>`);
+    async function post(overrides) {
+      await fetch(U("/api/thresholds"), { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, overrides }) });
+      closeModal();
+    }
+    $("thr-save").onclick = () => {
+      const overrides = {};
+      modalBox.querySelectorAll("input[data-f]").forEach((inp) => {
+        if (inp.value.trim() !== "") overrides[inp.dataset.f] = parseFloat(inp.value);
+      });
+      post(overrides);
+    };
+    $("thr-reset").onclick = () => post({});
   }
 
   // ---- history ------------------------------------------------------
@@ -625,6 +676,15 @@
   // ============================ WIRING ============================
   $("btn-setup").addEventListener("click", openWizard);
   $("btn-help").addEventListener("click", openHelp);
+  const rc = $("reset-counters");
+  if (rc) rc.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!confirm("Reset the charged/discharged energy counters to zero for all batteries?")) return;
+    try {
+      await fetch(U("/api/reset-counters"), { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+    } catch (_) {}
+  });
   const es2 = $("empty-setup"); if (es2) es2.addEventListener("click", openWizard);
   $("btn-bt-test").addEventListener("click", runBtTest);
   document.querySelectorAll(".tab").forEach((btn) => {

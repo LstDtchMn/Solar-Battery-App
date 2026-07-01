@@ -8,10 +8,17 @@ runs in a single asyncio loop; the web server reads immutable snapshots.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import platform
 import time
 from typing import Dict, List, Optional, Set
+
+#: Alarm thresholds a user may override per battery.
+THRESHOLD_FIELDS = (
+    "cell_delta_warn", "cell_delta_critical", "temp_high", "temp_low",
+    "soc_low", "soc_critical", "voltage_high", "voltage_low",
+)
 
 from .alarms import AlarmEngine, Notifier
 from .config import Config, TransportConfig
@@ -37,26 +44,36 @@ class Manager:
         self._collector_task: Optional[asyncio.Task] = None
         self._housekeeping_task: Optional[asyncio.Task] = None
         self._watchdog_task: Optional[asyncio.Task] = None
+        # Per-battery alarm-threshold overrides {address: {field: value}}.
+        self._thresholds: Dict[str, dict] = self.storage.get_all_thresholds()
         self.transport = build_transport(
             config.transport, self._on_sample, self._on_state
         )
-        # Seed states from the device registry so names persist across restarts.
+        # Seed states from the device registry so names, capacities and energy
+        # counters persist across restarts.
         for addr, dev in self.storage.get_devices().items():
-            st = BatteryState(address=addr, name=dev.get("name") or addr)
-            if dev.get("capacity_ah"):
-                st.capacity_override = dev["capacity_ah"]
-                st.capacity_ah = dev["capacity_ah"]
-            self.states[addr] = st
+            self.states[addr] = self._new_state(addr, dev)
 
     # ------------------------------------------------------------------
+    def _new_state(self, addr: str, dev: dict) -> BatteryState:
+        st = BatteryState(address=addr, name=(dev.get("name") or addr))
+        if dev.get("capacity_ah"):
+            st.capacity_override = dev["capacity_ah"]
+            st.capacity_ah = dev["capacity_ah"]
+        cnt = self.storage.get_counters(addr)
+        if cnt:
+            st.wh_charged = cnt.get("wh_charged") or 0.0
+            st.wh_discharged = cnt.get("wh_discharged") or 0.0
+            st.ah_charged = cnt.get("ah_charged") or 0.0
+            st.ah_discharged = cnt.get("ah_discharged") or 0.0
+            if cnt.get("since_ts"):
+                st.session_start = cnt["since_ts"]
+        return st
+
     def _state_for(self, address: str) -> BatteryState:
         st = self.states.get(address)
         if st is None:
-            dev = self.storage.get_device(address) or {}
-            st = BatteryState(address=address, name=dev.get("name") or address)
-            if dev.get("capacity_ah"):
-                st.capacity_override = dev["capacity_ah"]
-                st.capacity_ah = dev["capacity_ah"]
+            st = self._new_state(address, self.storage.get_device(address) or {})
             self.states[address] = st
         return st
 
@@ -71,10 +88,19 @@ class Manager:
         if st.capacity_override is not None:
             sample.total_capacity = st.capacity_override
 
+        # A sample proves the battery is alive: refresh connection liveness here
+        # (centrally) so the stale watchdog works for every transport, and clears
+        # a prior "stale" mark once data resumes.
+        if st.connection is not None:
+            st.connection.connected = True
+            st.connection.last_seen = sample.timestamp or time.time()
+            if st.connection.error and st.connection.error.startswith("no data"):
+                st.connection.error = ""
+
         # Alarm evaluation touches storage (event log); never let a transient
         # error there escape and kill the collector.
         try:
-            active = self.alarms.evaluate(st)
+            active = self.alarms.evaluate(st, self._effective_alarm_cfg(sample.address))
         except Exception:
             log.exception("alarm evaluation failed for %s", sample.address)
             active = []
@@ -83,6 +109,10 @@ class Manager:
         if now - self._last_log.get(sample.address, 0) >= self.cfg.log_interval:
             try:
                 self.storage.insert_sample(sample)
+                # Persist energy counters so they survive a restart.
+                self.storage.save_counters(
+                    sample.address, st.wh_charged, st.wh_discharged,
+                    st.ah_charged, st.ah_discharged, st.session_start)
             except Exception:
                 pass
             self._last_log[sample.address] = now
@@ -213,6 +243,49 @@ class Manager:
         st.name = name
         if st.sample:
             st.sample.name = name
+
+    # -- per-battery alarm thresholds -----------------------------------
+    def global_thresholds(self) -> dict:
+        a = self.cfg.alarms
+        return {f: getattr(a, f) for f in THRESHOLD_FIELDS}
+
+    def get_thresholds(self, address: str) -> dict:
+        return dict(self._thresholds.get(address, {}))
+
+    def set_thresholds(self, address: str, overrides: dict) -> None:
+        clean = {}
+        for f in THRESHOLD_FIELDS:
+            v = overrides.get(f)
+            if v is None or v == "":
+                continue
+            try:
+                clean[f] = float(v)
+            except (TypeError, ValueError):
+                continue
+        self._thresholds[address] = clean
+        self.storage.set_thresholds(address, clean)
+
+    def _effective_alarm_cfg(self, address: str):
+        ov = self._thresholds.get(address)
+        if not ov:
+            return self.cfg.alarms
+        fields = {k: v for k, v in ov.items() if k in THRESHOLD_FIELDS}
+        return dataclasses.replace(self.cfg.alarms, **fields)
+
+    def reset_counters(self, address: Optional[str] = None) -> None:
+        """Zero the energy counters for one battery (or all) and restart the
+        'since' clock."""
+        now = time.time()
+        targets = [address] if address else list(self.states.keys())
+        for addr in targets:
+            st = self._state_for(addr)
+            st.wh_charged = st.wh_discharged = 0.0
+            st.ah_charged = st.ah_discharged = 0.0
+            st.session_start = now
+            try:
+                self.storage.reset_counters(addr, now)
+            except Exception:
+                log.debug("reset_counters failed for %s", addr, exc_info=True)
 
     def set_capacity(self, address: str, capacity_ah: float) -> None:
         if not capacity_ah or capacity_ah <= 0:

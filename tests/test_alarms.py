@@ -160,3 +160,14 @@ def test_normal_state_has_no_alarms():
     eng = engine()
     st = state_with()  # all nominal
     assert eng.evaluate(st) == []
+
+
+def test_per_battery_threshold_override():
+    import dataclasses
+    eng = engine()
+    # soc=20 is fine under the global soc_low=15, so no alarm by default
+    assert "SOC_LOW" not in [a.code for a in eng.evaluate(state_with(soc=20.0))]
+    # but with a per-battery override raising soc_low to 25, it should alarm
+    cfg = dataclasses.replace(AlarmConfig(), soc_low=25.0)
+    codes = [a.code for a in eng.evaluate(state_with(soc=20.0), cfg)]
+    assert "SOC_LOW" in codes

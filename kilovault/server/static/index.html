@@ -36,9 +36,11 @@
       <div class="metric"><label>Cell Δ (bank) <i class="tip" data-tip="The biggest voltage gap between any two cells across the whole bank. KiloVault says keep this under 300 mV. A large gap means a battery needs balancing or a full charge.">i</i></label><div class="value" id="bank-delta">—</div><span class="unit">mV</span></div>
     </div>
     <div class="bank-energy">
-      <span>⚡ Charged this session: <b id="bank-wh-in">0</b> Wh</span>
+      <span>⚡ Charged: <b id="bank-wh-in">0</b> Wh</span>
       <span>🔋 Discharged: <b id="bank-wh-out">0</b> Wh</span>
+      <span id="bank-since"></span>
       <span>Temp range: <b id="bank-temp">—</b></span>
+      <a href="#" id="reset-counters" class="reset-link" title="Reset the energy counters to zero">↺ reset</a>
     </div>
   </section>
 

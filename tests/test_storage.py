@@ -93,6 +93,34 @@ def test_history_time_window(store):
     assert len(recent) == 1
 
 
+def test_counters_persist_and_reset(store):
+    assert store.get_counters("AA") is None
+    store.save_counters("AA", 120.0, 30.0, 9.0, 2.0, 1000.0)
+    c = store.get_counters("AA")
+    assert c["wh_charged"] == pytest.approx(120.0)
+    assert c["ah_discharged"] == pytest.approx(2.0)
+    assert c["since_ts"] == pytest.approx(1000.0)
+    # upsert overwrites
+    store.save_counters("AA", 200.0, 30.0, 15.0, 2.0, 1000.0)
+    assert store.get_counters("AA")["wh_charged"] == pytest.approx(200.0)
+    # reset zeroes and stamps a new since
+    store.reset_counters("AA", 2000.0)
+    c = store.get_counters("AA")
+    assert c["wh_charged"] == 0 and c["since_ts"] == pytest.approx(2000.0)
+
+
+def test_thresholds_roundtrip(store):
+    assert store.get_thresholds("AA") == {}
+    store.set_thresholds("AA", {"soc_low": 25.0, "temp_high": 40.0})
+    assert store.get_thresholds("AA") == {"soc_low": 25.0, "temp_high": 40.0}
+    store.set_thresholds("BB", {"voltage_low": 11.0})
+    allt = store.get_all_thresholds()
+    assert allt["AA"]["soc_low"] == 25.0 and allt["BB"]["voltage_low"] == 11.0
+    # clearing overrides
+    store.set_thresholds("AA", {})
+    assert store.get_thresholds("AA") == {}
+
+
 def test_stats(store):
     base = time.time()
     for i, v in enumerate([12.0, 13.0, 14.0]):

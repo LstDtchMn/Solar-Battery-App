@@ -129,6 +129,7 @@ class BatteryState:
             "time_to_full_h": self.time_to_full_h,
             "time_to_empty_h": self.time_to_empty_h,
             "session_seconds": round(time.time() - self.session_start),
+            "since_ts": self.session_start,
             "frames_received": self.frames_received,
             "crc_errors": self.crc_errors,
         }

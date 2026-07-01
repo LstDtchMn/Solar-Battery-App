@@ -264,3 +264,16 @@ canvas { width: 100%; display: block; }
   border-radius: var(--radius); padding: .9rem 1.1rem; margin-bottom: 1rem; }
 .bt-result.ok { border-color: var(--accent); }
 .bt-result.bad { border-color: var(--crit); }
+
+/* ---- energy reset + per-battery thresholds ---- */
+.reset-link { color: var(--accent-2); text-decoration: none; font-size: .82rem; }
+.reset-link:hover { text-decoration: underline; }
+#bank-since { color: var(--muted); }
+.card-name .cfg { color: var(--muted); cursor: pointer; font-size: .82rem; margin-left: .3rem; }
+.card-name .cfg:hover { color: var(--accent); }
+.thr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem 1rem; margin: .5rem 0 .3rem; }
+@media (max-width: 480px) { .thr-grid { grid-template-columns: 1fr; } }
+.thr-row { display: flex; flex-direction: column; gap: .25rem; font-size: .82rem; color: var(--muted); }
+.thr-row input { background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: .45rem .55rem; font-size: .9rem; }
+.thr-row small { color: var(--muted); }

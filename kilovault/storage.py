@@ -54,6 +54,20 @@ CREATE TABLE IF NOT EXISTS samples (
 );
 CREATE INDEX IF NOT EXISTS idx_samples_addr_ts ON samples(address, ts);
 
+CREATE TABLE IF NOT EXISTS counters (
+    address        TEXT PRIMARY KEY,
+    wh_charged     REAL DEFAULT 0,
+    wh_discharged  REAL DEFAULT 0,
+    ah_charged     REAL DEFAULT 0,
+    ah_discharged  REAL DEFAULT 0,
+    since_ts       REAL
+);
+
+CREATE TABLE IF NOT EXISTS thresholds (
+    address     TEXT PRIMARY KEY,
+    overrides   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     address     TEXT NOT NULL,
@@ -248,6 +262,64 @@ class Storage:
             cur = self._conn.execute("DELETE FROM samples WHERE ts<?", (cutoff,))
             self._conn.commit()
             return cur.rowcount
+
+    # -- energy counters (persist across restarts) ----------------------
+    def get_counters(self, address: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM counters WHERE address=?", (address,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def save_counters(self, address, wh_charged, wh_discharged,
+                      ah_charged, ah_discharged, since_ts) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO counters(address,wh_charged,wh_discharged,ah_charged,"
+                "ah_discharged,since_ts) VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(address) DO UPDATE SET wh_charged=excluded.wh_charged,"
+                "wh_discharged=excluded.wh_discharged,ah_charged=excluded.ah_charged,"
+                "ah_discharged=excluded.ah_discharged,since_ts=excluded.since_ts",
+                (address, wh_charged, wh_discharged, ah_charged, ah_discharged, since_ts),
+            )
+            self._conn.commit()
+
+    def reset_counters(self, address: str, since_ts: float) -> None:
+        self.save_counters(address, 0, 0, 0, 0, since_ts)
+
+    # -- per-battery alarm threshold overrides --------------------------
+    def get_thresholds(self, address: str) -> dict:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT overrides FROM thresholds WHERE address=?", (address,)
+            ).fetchone()
+        if not row or not row["overrides"]:
+            return {}
+        try:
+            return json.loads(row["overrides"])
+        except ValueError:
+            return {}
+
+    def get_all_thresholds(self) -> Dict[str, dict]:
+        with self._lock:
+            rows = self._conn.execute("SELECT address, overrides FROM thresholds").fetchall()
+        out = {}
+        for r in rows:
+            try:
+                out[r["address"]] = json.loads(r["overrides"]) if r["overrides"] else {}
+            except ValueError:
+                out[r["address"]] = {}
+        return out
+
+    def set_thresholds(self, address: str, overrides: dict) -> None:
+        payload = json.dumps(overrides)
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO thresholds(address,overrides) VALUES(?,?) "
+                "ON CONFLICT(address) DO UPDATE SET overrides=excluded.overrides",
+                (address, payload),
+            )
+            self._conn.commit()
 
     # -- events ---------------------------------------------------------
     def raise_event(self, address: str, code: str, severity: str, message: str) -> int:
