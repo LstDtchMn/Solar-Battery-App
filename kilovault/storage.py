@@ -180,23 +180,43 @@ class Storage:
         address: str,
         since: Optional[float] = None,
         until: Optional[float] = None,
-        limit: int = 5000,
+        limit: int = 20000,
         columns: Iterable[str] = ("ts", "voltage", "current", "power", "soc",
                                   "temperature", "cell_delta"),
+        max_points: Optional[int] = None,
     ) -> List[dict]:
+        """Return time-series rows in ascending time order.
+
+        When ``max_points`` is set and the window holds more rows than that, the
+        rows are evenly down-sampled across the *whole* window (instead of
+        truncating to only the most recent ones), so a multi-day chart still
+        shows the full span.
+        """
         cols = ",".join(c for c in columns if c.isidentifier())
-        q = f"SELECT {cols} FROM samples WHERE address=?"
+        where = "address=?"
         args: list = [address]
         if since is not None:
-            q += " AND ts>=?"
+            where += " AND ts>=?"
             args.append(since)
         if until is not None:
-            q += " AND ts<=?"
+            where += " AND ts<=?"
             args.append(until)
-        q += " ORDER BY ts DESC LIMIT ?"
-        args.append(limit)
+
         with self._lock:
-            rows = self._conn.execute(q, args).fetchall()
+            step = 1
+            if max_points and max_points > 0:
+                n = self._conn.execute(
+                    f"SELECT COUNT(*) FROM samples WHERE {where}", args
+                ).fetchone()[0]
+                if n > max_points:
+                    step = n // max_points + 1
+            if step > 1:
+                q = (f"SELECT {cols} FROM samples WHERE {where} AND (id % ?)=0 "
+                     f"ORDER BY ts ASC LIMIT ?")
+                rows = self._conn.execute(q, args + [step, limit]).fetchall()
+                return [dict(r) for r in rows]
+            q = f"SELECT {cols} FROM samples WHERE {where} ORDER BY ts DESC LIMIT ?"
+            rows = self._conn.execute(q, args + [limit]).fetchall()
         return [dict(r) for r in reversed(rows)]
 
     def latest(self, address: str) -> Optional[dict]:

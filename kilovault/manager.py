@@ -36,6 +36,7 @@ class Manager:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._collector_task: Optional[asyncio.Task] = None
         self._housekeeping_task: Optional[asyncio.Task] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
         self.transport = build_transport(
             config.transport, self._on_sample, self._on_state
         )
@@ -229,6 +230,33 @@ class Manager:
         self._collector_task = asyncio.ensure_future(self._run_transport())
         if self.cfg.retention_days and self.cfg.retention_days > 0:
             self._housekeeping_task = asyncio.ensure_future(self._housekeeping())
+        if self.cfg.transport.stale_after_seconds and self.cfg.transport.stale_after_seconds > 0:
+            self._watchdog_task = asyncio.ensure_future(self._watchdog())
+
+    async def _watchdog(self) -> None:
+        """Mark a battery offline if it stops delivering data without a clean
+        disconnect (e.g. BLE notifications silently stop)."""
+        stale = self.cfg.transport.stale_after_seconds
+        while True:
+            try:
+                now = time.time()
+                for st in list(self.states.values()):
+                    conn = st.connection
+                    if (conn and conn.connected and conn.last_seen
+                            and now - conn.last_seen > stale):
+                        age = now - conn.last_seen
+                        conn.connected = False
+                        conn.error = f"no data for {int(age)}s"
+                        st.mark_disconnected()
+                        log.warning("Battery %s went stale (no data for %.0fs)",
+                                    st.address, age)
+                        await self._publish({"type": "state", "address": st.address,
+                                             "battery": st.to_dict()})
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.debug("watchdog error", exc_info=True)
+            await asyncio.sleep(min(5.0, max(1.0, stale / 3.0)))
 
     async def _housekeeping(self) -> None:
         """Periodically prune old history so the DB doesn't grow forever."""
@@ -278,7 +306,7 @@ class Manager:
             await self._collector_task
 
     async def stop(self) -> None:
-        for task in (self._collector_task, self._housekeeping_task):
+        for task in (self._collector_task, self._housekeeping_task, self._watchdog_task):
             if task:
                 task.cancel()
                 try:

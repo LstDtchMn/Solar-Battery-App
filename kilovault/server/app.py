@@ -238,9 +238,10 @@ class DashboardServer:
         if not addr:
             return await self._json(writer, {"error": "address required"}, 400)
         minutes = _num(params, "minutes", 180.0, float, 0.0, 525600.0)
-        limit = _num(params, "limit", 3000, int, 1, 20000)
+        points = _num(params, "points", 2000, int, 100, 8000)
         since = time.time() - minutes * 60 if minutes > 0 else None
-        rows = self.manager.storage.history(addr, since=since, limit=limit)
+        rows = self.manager.storage.history(
+            addr, since=since, limit=20000, max_points=points)
         return await self._json(writer, {"address": addr, "rows": rows})
 
     def _preflight(self) -> dict:

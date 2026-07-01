@@ -107,6 +107,51 @@ class Config:
         cfg.web = _merge(WebConfig(), raw.get("web", {}))
         return cfg
 
+    def validate(self) -> list:
+        """Clamp out-of-range settings to safe values; return warning strings."""
+        warnings = []
+
+        def clamp(obj, attr, lo, hi, name):
+            v = getattr(obj, attr)
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                warnings.append(f"{name} is not a number; using default")
+                return
+            if v < lo or v > hi:
+                nv = min(max(v, lo), hi)
+                warnings.append(f"{name}={v} out of range [{lo},{hi}]; using {nv}")
+                setattr(obj, attr, nv)  # float; port is re-cast to int below
+
+        clamp(self, "log_interval", 0.1, 3600, "log_interval")
+        clamp(self, "retention_days", 0, 36500, "retention_days")
+        clamp(self.web, "port", 1, 65535, "web.port")
+        a = self.alarms
+        clamp(a, "temp_low", -40, 100, "alarms.temp_low")
+        clamp(a, "temp_high", -40, 100, "alarms.temp_high")
+        clamp(a, "soc_low", 0, 100, "alarms.soc_low")
+        clamp(a, "soc_critical", 0, 100, "alarms.soc_critical")
+        clamp(a, "voltage_low", 0, 60, "alarms.voltage_low")
+        clamp(a, "voltage_high", 0, 60, "alarms.voltage_high")
+
+        if a.temp_low >= a.temp_high:
+            warnings.append("alarms.temp_low >= temp_high; disabling those alarms")
+            a.temp_low, a.temp_high = -273.0, 999.0
+        if a.voltage_low >= a.voltage_high:
+            warnings.append("alarms.voltage_low >= voltage_high; disabling those alarms")
+            a.voltage_low, a.voltage_high = 0.0, 999.0
+        if a.soc_critical > a.soc_low:
+            warnings.append("alarms.soc_critical > soc_low; swapping")
+            a.soc_low, a.soc_critical = a.soc_critical, a.soc_low
+        if a.cell_delta_warn > a.cell_delta_critical:
+            warnings.append("alarms.cell_delta_warn > cell_delta_critical; swapping")
+            a.cell_delta_warn, a.cell_delta_critical = a.cell_delta_critical, a.cell_delta_warn
+        if self.transport.type not in ("ble", "serial", "simulator"):
+            warnings.append(f"transport.type '{self.transport.type}' invalid; using 'ble'")
+            self.transport.type = "ble"
+        self.web.port = int(self.web.port)  # port must be an integer
+        return warnings
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["data_dir"] = str(self.data_dir)

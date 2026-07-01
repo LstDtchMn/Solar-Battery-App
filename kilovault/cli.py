@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 import time
 from pathlib import Path
@@ -356,7 +357,10 @@ def _run(argv) -> int:
 
     from .logging_setup import setup_logging, log_environment
 
+    config_warnings = cfg.validate()
     log_path = setup_logging(cfg.data_dir)
+    for w in config_warnings:
+        logging.getLogger("kilovault.config").warning("config: %s", w)
     if cmd in ("serve", "monitor"):
         log_environment(cfg)
         print(f"Log file: {log_path}")

@@ -1,0 +1,28 @@
+name: Tests
+
+# Runs the unit test suite on every push and pull request. The core is
+# standard-library only, so this needs just pytest (bleak/pyserial are optional
+# and their transports are lazily imported).
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test deps
+        run: pip install pytest
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Import check (core must work with no extra deps)
+        run: python -c "import kilovault; from kilovault.cli import build_parser; from kilovault.server.app import DashboardServer; print('ok', kilovault.__version__)"
