@@ -93,19 +93,35 @@ async def _serve(cfg: Config) -> int:
     from .manager import Manager
     from .server import DashboardServer
 
+    import errno
+
     manager = Manager(cfg)
-    server = DashboardServer(manager, cfg.web.host, cfg.web.port)
-    try:
-        await server.start()
-    except OSError as exc:
-        import errno
-        if exc.errno in (errno.EADDRINUSE, 98, 10048) or getattr(exc, "winerror", None) == 10048:
-            try:
-                manager.storage.close()
-            except Exception:
-                pass
-            return _handle_port_in_use(cfg)
-        raise
+    base_port = cfg.web.port
+    server = None
+    for attempt in range(11):  # try base .. base+10
+        port = base_port + attempt
+        candidate = DashboardServer(manager, cfg.web.host, port)
+        try:
+            await candidate.start()
+            server = candidate
+            cfg.web.port = port
+            break
+        except OSError as exc:
+            busy = (exc.errno in (errno.EADDRINUSE, 98, 10048)
+                    or getattr(exc, "winerror", None) == 10048)
+            if not busy:
+                raise
+            # If our own dashboard already answers on the requested port, don't
+            # start a duplicate — just open the one that's running.
+            if attempt == 0 and _dashboard_responding(port):
+                _close_quietly(manager)
+                return _handle_already_running(port)
+            # Otherwise the port is taken by something else; try the next one.
+    if server is None:
+        _close_quietly(manager)
+        return _handle_no_free_port(base_port)
+    if cfg.web.port != base_port:
+        print(f"  (Port {base_port} was busy — using {cfg.web.port} instead.)")
     await manager.start()
 
     host_display = "localhost" if cfg.web.host in ("127.0.0.1", "0.0.0.0", "::") else cfg.web.host
@@ -155,32 +171,34 @@ def _dashboard_responding(port: int) -> bool:
         return False
 
 
-def _handle_port_in_use(cfg: Config) -> int:
-    """Friendly message when the web port is already taken.
+def _close_quietly(manager) -> None:
+    try:
+        manager.storage.close()
+    except Exception:
+        pass
 
-    The usual cause is that the monitor is already running, so point the user at
-    the existing dashboard instead of showing a crash.
-    """
-    port = cfg.web.port
+
+def _handle_already_running(port: int) -> int:
+    """The monitor is already running here — point the user at it."""
     url = f"http://127.0.0.1:{port}/"
     print("=" * 56)
-    if _dashboard_responding(port):
-        print("  KiloVault HLX+ Monitor is ALREADY RUNNING.")
-        print(f"  Opening it in your browser:  {url}")
-        try:
-            import webbrowser
-            webbrowser.open(url)
-        except Exception:
-            pass
-        print("  (No need to start it twice — use the window/tab that")
-        print("   is already open.)")
-        print("=" * 56)
-        return 0
-    exe = (Path(sys.argv[0]).name if getattr(sys, "frozen", False)
-           else "python -m kilovault.cli")
-    print(f"  Cannot start: port {port} is already used by another program.")
-    print("  Close that program, or start on a different port, e.g.:")
-    print(f"     {exe} serve --port {port + 1}")
+    print("  KiloVault HLX+ Monitor is ALREADY RUNNING.")
+    print(f"  Opening it in your browser:  {url}")
+    try:
+        import webbrowser
+        webbrowser.open(url)
+    except Exception:
+        pass
+    print("  (No need to start it twice — use the window/tab already open.)")
+    print("=" * 56)
+    return 0
+
+
+def _handle_no_free_port(base_port: int) -> int:
+    print("=" * 56)
+    print(f"  Could not find a free port near {base_port}.")
+    print("  Close other programs using these ports, or set a different")
+    print('  port in config.toml under [web], then start again.')
     print("=" * 56)
     return 1
 

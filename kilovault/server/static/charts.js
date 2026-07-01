@@ -11,14 +11,21 @@
     series: ["#38d39f", "#4ea1ff", "#ffb23e", "#ff5a5f", "#b58bff"],
   };
 
-  function dpr() { return global.devicePixelRatio || 1; }
+  function dpr() { return Math.min(global.devicePixelRatio || 1, 3); }
 
   function fitCanvas(canvas) {
     const ratio = dpr();
-    const cssW = canvas.clientWidth || canvas.parentElement.clientWidth || 600;
-    const cssH = canvas.height || 180;
-    canvas.width = Math.round(cssW * ratio);
-    canvas.height = Math.round(cssH * ratio);
+    // Use the CSS-rendered size (stable), NOT canvas.width/height — those are
+    // the backing-store size we set below, and reading them back here would
+    // compound by `ratio` on every redraw until the canvas overflows and the
+    // browser shows a broken-canvas placeholder (seen on scaled displays).
+    const rect = canvas.getBoundingClientRect();
+    const cssW = Math.max(1, Math.round(rect.width || canvas.clientWidth || 300));
+    const cssH = Math.max(1, Math.round(
+      rect.height || parseInt(canvas.getAttribute("height"), 10) || 180));
+    const bw = Math.round(cssW * ratio), bh = Math.round(cssH * ratio);
+    if (canvas.width !== bw) canvas.width = bw;
+    if (canvas.height !== bh) canvas.height = bh;
     const ctx = canvas.getContext("2d");
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     return { ctx, w: cssW, h: cssH };
