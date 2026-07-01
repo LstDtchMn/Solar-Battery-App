@@ -95,7 +95,17 @@ async def _serve(cfg: Config) -> int:
 
     manager = Manager(cfg)
     server = DashboardServer(manager, cfg.web.host, cfg.web.port)
-    await server.start()
+    try:
+        await server.start()
+    except OSError as exc:
+        import errno
+        if exc.errno in (errno.EADDRINUSE, 98, 10048) or getattr(exc, "winerror", None) == 10048:
+            try:
+                manager.storage.close()
+            except Exception:
+                pass
+            return _handle_port_in_use(cfg)
+        raise
     await manager.start()
 
     host_display = "localhost" if cfg.web.host in ("127.0.0.1", "0.0.0.0", "::") else cfg.web.host
@@ -128,6 +138,51 @@ async def _serve(cfg: Config) -> int:
     finally:
         await manager.stop()
     return 0
+
+
+def _dashboard_responding(port: int) -> bool:
+    """True if our own dashboard is already answering on this port."""
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/snapshot", timeout=2
+        ) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return isinstance(data, dict) and "transport" in data
+    except Exception:
+        return False
+
+
+def _handle_port_in_use(cfg: Config) -> int:
+    """Friendly message when the web port is already taken.
+
+    The usual cause is that the monitor is already running, so point the user at
+    the existing dashboard instead of showing a crash.
+    """
+    port = cfg.web.port
+    url = f"http://127.0.0.1:{port}/"
+    print("=" * 56)
+    if _dashboard_responding(port):
+        print("  KiloVault HLX+ Monitor is ALREADY RUNNING.")
+        print(f"  Opening it in your browser:  {url}")
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
+        print("  (No need to start it twice — use the window/tab that")
+        print("   is already open.)")
+        print("=" * 56)
+        return 0
+    exe = (Path(sys.argv[0]).name if getattr(sys, "frozen", False)
+           else "python -m kilovault.cli")
+    print(f"  Cannot start: port {port} is already used by another program.")
+    print("  Close that program, or start on a different port, e.g.:")
+    print(f"     {exe} serve --port {port + 1}")
+    print("=" * 56)
+    return 1
 
 
 # ---------------------------------------------------------------------------
