@@ -20,9 +20,10 @@ THRESHOLD_FIELDS = (
     "soc_low", "soc_critical", "voltage_high", "voltage_low",
 )
 
-from .alarms import AlarmEngine, Notifier
+from .alarms import Alarm, AlarmEngine, Notifier
 from .config import Config, TransportConfig
 from .estimator import BatteryState, bank_summary
+from .hardware import HardwareAlerter
 from .protocol import BatterySample
 from .storage import Storage
 from .transports import build_transport
@@ -37,7 +38,10 @@ class Manager:
         self.storage = Storage(config.db_path)
         self.notifier = Notifier(config.alarms.sound, config.alarms.notify_desktop)
         self.alarms = AlarmEngine(config.alarms, self.storage, self.notifier)
+        self.hardware = HardwareAlerter(config.hardware)
         self.states: Dict[str, BatteryState] = {}
+        # Latest active alarms per battery, for bank-wide hardware alerting.
+        self._active_alarms: Dict[str, List[Alarm]] = {}
         self._subscribers: Set[asyncio.Queue] = set()
         self._last_log: Dict[str, float] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -104,6 +108,8 @@ class Manager:
         except Exception:
             log.exception("alarm evaluation failed for %s", sample.address)
             active = []
+        self._active_alarms[sample.address] = active
+        self._update_hardware()
 
         now = sample.timestamp or time.time()
         if now - self._last_log.get(sample.address, 0) >= self.cfg.log_interval:
@@ -228,6 +234,8 @@ class Manager:
             "python": platform.python_version(),
             "transport": self.cfg.transport.type,
             "db_path": str(self.cfg.db_path),
+            "hardware_alerting": (self.cfg.hardware.alert_on
+                                  if self.hardware.enabled else "off"),
             "bleak_version": bleak_ver,
             "pyserial_version": serial_ver,
             "battery_count": len(self.states),
@@ -243,6 +251,21 @@ class Manager:
         st.name = name
         if st.sample:
             st.sample.name = name
+
+    def _update_hardware(self) -> None:
+        """Drive the physical alerter from the bank-wide alarm state."""
+        if not self.hardware.enabled:
+            return
+        all_active = [a for lst in self._active_alarms.values() for a in lst]
+        if self.cfg.hardware.alert_on == "any":
+            want = bool(all_active)
+        else:  # "critical"
+            want = any(a.severity == "critical" for a in all_active)
+        try:
+            self.hardware.set_active(want, [a for a in all_active
+                                            if a.severity == "critical"] or all_active)
+        except Exception:
+            log.debug("hardware update failed", exc_info=True)
 
     # -- per-battery alarm thresholds -----------------------------------
     def global_thresholds(self) -> dict:
@@ -388,6 +411,10 @@ class Manager:
                     pass
         try:
             await self.transport.stop()
+        except Exception:
+            pass
+        try:
+            self.hardware.close()
         except Exception:
             pass
         self.storage.close()

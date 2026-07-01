@@ -61,6 +61,26 @@ class TransportConfig:
 
 
 @dataclass
+class HardwareConfig:
+    """Physical alerting for an unattended cabin: drive a siren/light/relay when
+    an alarm fires. All actions are local and offline."""
+    # When to activate: "critical" (default), "any" alarm, or "none" (disabled).
+    alert_on: str = "critical"
+    # USB serial relay board (works on Windows/Linux). Bytes are hex, e.g.
+    # "A0 01 01 A2" to close, "A0 01 00 A1" to open (varies by board).
+    serial_relay_port: str = ""
+    serial_relay_baud: int = 9600
+    serial_relay_on: str = ""
+    serial_relay_off: str = ""
+    # Raspberry Pi GPIO (needs gpiozero). 0 = disabled.
+    gpio_pin: int = 0
+    gpio_active_high: bool = True
+    # A local shell command to run when an alert starts (e.g. play a sound).
+    # The active alarm codes are passed in the KV_ALARMS environment variable.
+    command: str = ""
+
+
+@dataclass
 class WebConfig:
     host: str = "127.0.0.1"
     port: int = 8765
@@ -77,6 +97,7 @@ class Config:
     transport: TransportConfig = field(default_factory=TransportConfig)
     alarms: AlarmConfig = field(default_factory=AlarmConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    hardware: HardwareConfig = field(default_factory=HardwareConfig)
 
     # ------------------------------------------------------------------
     @classmethod
@@ -105,6 +126,7 @@ class Config:
         cfg.transport = _merge(TransportConfig(), raw.get("transport", {}))
         cfg.alarms = _merge(AlarmConfig(), raw.get("alarms", {}))
         cfg.web = _merge(WebConfig(), raw.get("web", {}))
+        cfg.hardware = _merge(HardwareConfig(), raw.get("hardware", {}))
         return cfg
 
     def validate(self) -> list:
@@ -149,6 +171,9 @@ class Config:
         if self.transport.type not in ("ble", "serial", "simulator"):
             warnings.append(f"transport.type '{self.transport.type}' invalid; using 'ble'")
             self.transport.type = "ble"
+        if self.hardware.alert_on not in ("critical", "any", "none"):
+            warnings.append(f"hardware.alert_on '{self.hardware.alert_on}' invalid; using 'critical'")
+            self.hardware.alert_on = "critical"
         self.web.port = int(self.web.port)  # port must be an integer
         return warnings
 
@@ -210,4 +235,21 @@ voltage_high = 14.6
 voltage_low = 11.5
 notify_desktop = true
 sound = true
+
+[hardware]
+# Drive a physical siren/light/relay when an alarm fires (all local, offline).
+alert_on = "critical"       # "critical" | "any" | "none"
+
+# USB serial relay board (Windows or Linux). Bytes are hex; values vary by board.
+# serial_relay_port = "COM5"       # or /dev/ttyUSB1
+# serial_relay_baud = 9600
+# serial_relay_on  = "A0 01 01 A2"  # command that closes the relay (siren ON)
+# serial_relay_off = "A0 01 00 A1"  # command that opens the relay (siren OFF)
+
+# Raspberry Pi GPIO (needs: pip install gpiozero). 0 = disabled.
+# gpio_pin = 17
+# gpio_active_high = true
+
+# Or run any local command when an alert starts (active codes in $KV_ALARMS):
+# command = "powershell -c (New-Object Media.SoundPlayer 'C:/siren.wav').PlaySync()"
 """

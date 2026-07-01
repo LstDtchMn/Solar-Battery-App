@@ -77,6 +77,26 @@ serial_port = "192.168.1.50:3333"   # host:port enables TCP mode
 ESP32 sit anywhere on the cabin's local network with no cable to the PC — still
 fully offline, no cloud.
 
+## Physical alerts (siren / light) for an unattended cabin
+
+An on-screen alarm is useless if nobody is watching. The monitor can drive a
+physical alert when an alarm fires — all local, no internet. Configure it under
+`[hardware]` in `config.toml` (run `kvmon init-config` for a template):
+
+- **USB serial relay** (works on Windows and Linux): a cheap USB relay board
+  switches a 12 V siren or light. Set `serial_relay_port` and the hex byte
+  commands `serial_relay_on` / `serial_relay_off` for your board.
+- **Run any command**: `command = "..."` runs when an alert starts (the active
+  alarm codes are passed in the `KV_ALARMS` environment variable) — e.g. play a
+  sound file, or toggle a smart plug on the LAN.
+- **Raspberry Pi GPIO**: set `gpio_pin` (needs `pip install gpiozero`) to drive a
+  relay/buzzer directly from a Pi's header.
+
+`alert_on` chooses when it triggers: `critical` (default), `any` alarm, or
+`none`. The alert is edge-triggered — it activates when an alarm appears and
+releases when all clear, so it never chatters. The Diagnostics page shows whether
+hardware alerting is active.
+
 ## Safety
 
 - This tool is **read-only**: it subscribes to status notifications and never

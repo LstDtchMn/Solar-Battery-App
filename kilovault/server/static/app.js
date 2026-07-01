@@ -608,6 +608,7 @@
       ["Data source", d.transport],
       ["Bluetooth (bleak)", d.bleak_version || "not installed"],
       ["Serial (pyserial)", d.pyserial_version || "not installed"],
+      ["Hardware alerting", d.hardware_alerting || "off"],
       ["Batteries online", `${d.online_count} / ${d.battery_count}`],
       ["Data folder", d.db_path],
     ];
