@@ -121,6 +121,20 @@ def test_thresholds_roundtrip(store):
     assert store.get_thresholds("AA") == {}
 
 
+def test_history_downsample_multi_battery(store):
+    # Interleave two batteries so their global AUTOINCREMENT ids alternate parity;
+    # downsampling must return rows for BOTH (regression for the id%step bug).
+    base = time.time() - 10000
+    for i in range(3000):
+        store.insert_sample(make_sample(addr="A", ts=base + i))
+        store.insert_sample(make_sample(addr="B", ts=base + i))
+    a = store.history("A", max_points=500)
+    b = store.history("B", max_points=500)
+    assert len(a) > 100 and len(b) > 100        # neither battery is empty/biased
+    assert a[0]["ts"] < base + 200              # covers the start of the window
+    assert a[-1]["ts"] > base + 2700            # ...and the end
+
+
 def test_daily_summary(store):
     base = time.time() - 3600
     for i in range(60):

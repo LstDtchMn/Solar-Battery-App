@@ -225,8 +225,14 @@ class Storage:
                 if n > max_points:
                     step = n // max_points + 1
             if step > 1:
-                q = (f"SELECT {cols} FROM samples WHERE {where} AND (id % ?)=0 "
-                     f"ORDER BY ts ASC LIMIT ?")
+                # Number rows per-address by time (the global AUTOINCREMENT id is
+                # shared across batteries, so `id % step` would drop/bias one
+                # battery's rows when samples interleave). ROW_NUMBER is contiguous
+                # per address, giving an even sample across the whole window.
+                q = (f"SELECT {cols} FROM ("
+                     f"  SELECT {cols}, ROW_NUMBER() OVER (ORDER BY ts) AS rn "
+                     f"  FROM samples WHERE {where}"
+                     f") WHERE rn % ? = 0 ORDER BY ts ASC LIMIT ?")
                 rows = self._conn.execute(q, args + [step, limit]).fetchall()
                 return [dict(r) for r in rows]
             q = f"SELECT {cols} FROM samples WHERE {where} ORDER BY ts DESC LIMIT ?"

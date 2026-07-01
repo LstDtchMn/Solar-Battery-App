@@ -350,11 +350,11 @@
   async function loadSummary(addr) {
     const tb = $("summary-body");
     if (!tb) return;
+    tb.innerHTML = "";  // clear first so a failed/switched request never shows stale rows
     let data;
     try {
       data = await (await fetch(U(`/api/summary?address=${encodeURIComponent(addr)}&days=30`))).json();
     } catch (_) { return; }
-    tb.innerHTML = "";
     (data.days || []).forEach((d) => {
       const tr = document.createElement("tr");
       const cells = [
@@ -715,6 +715,11 @@
     try {
       await fetch(U("/api/reset-counters"), { method: "POST",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      // Refresh immediately so the totals don't linger until the next poll.
+      const s = await (await fetch(U("/api/snapshot"))).json();
+      bankState = s.bank;
+      (s.batteries || []).forEach((b) => { batteries[b.address] = b; });
+      renderBank(); renderCards();
     } catch (_) {}
   });
   const es2 = $("empty-setup"); if (es2) es2.addEventListener("click", openWizard);

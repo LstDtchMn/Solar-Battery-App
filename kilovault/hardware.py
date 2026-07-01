@@ -75,7 +75,8 @@ class HardwareAlerter:
 
         data = bytes.fromhex(hex_bytes.replace(" ", ""))
         with serial.Serial(self.cfg.serial_relay_port,
-                           self.cfg.serial_relay_baud, timeout=1) as s:
+                           self.cfg.serial_relay_baud,
+                           timeout=1, write_timeout=2) as s:
             s.write(data)
 
     def _gpio(self, on: bool) -> None:

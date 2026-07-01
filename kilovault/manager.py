@@ -8,6 +8,7 @@ runs in a single asyncio loop; the web server reads immutable snapshots.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import dataclasses
 import logging
 import platform
@@ -42,6 +43,12 @@ class Manager:
         self.states: Dict[str, BatteryState] = {}
         # Latest active alarms per battery, for bank-wide hardware alerting.
         self._active_alarms: Dict[str, List[Alarm]] = {}
+        self._hw_last: Optional[bool] = None
+        # Drive the (possibly blocking) relay/GPIO/command off the event loop.
+        self._hw_executor = (
+            concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="kv-hw")
+            if self.hardware.enabled else None
+        )
         self._subscribers: Set[asyncio.Queue] = set()
         self._last_log: Dict[str, float] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -253,7 +260,11 @@ class Manager:
             st.sample.name = name
 
     def _update_hardware(self) -> None:
-        """Drive the physical alerter from the bank-wide alarm state."""
+        """Drive the physical alerter from the bank-wide alarm state.
+
+        Runs only on a state transition, and off the event loop, so a slow/hung
+        USB relay or command can never stall sampling or the SSE dashboard.
+        """
         if not self.hardware.enabled:
             return
         all_active = [a for lst in self._active_alarms.values() for a in lst]
@@ -261,11 +272,18 @@ class Manager:
             want = bool(all_active)
         else:  # "critical"
             want = any(a.severity == "critical" for a in all_active)
+        if want == self._hw_last:
+            return
+        self._hw_last = want
+        alarms = [a for a in all_active if a.severity == "critical"] or all_active
         try:
-            self.hardware.set_active(want, [a for a in all_active
-                                            if a.severity == "critical"] or all_active)
-        except Exception:
-            log.debug("hardware update failed", exc_info=True)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None and self._hw_executor is not None:
+            loop.run_in_executor(self._hw_executor, self.hardware.set_active, want, list(alarms))
+        else:  # no event loop (tests / direct call): run inline
+            self.hardware.set_active(want, list(alarms))
 
     # -- per-battery alarm thresholds -----------------------------------
     def global_thresholds(self) -> dict:
@@ -417,4 +435,6 @@ class Manager:
             self.hardware.close()
         except Exception:
             pass
+        if self._hw_executor is not None:
+            self._hw_executor.shutdown(wait=False)
         self.storage.close()

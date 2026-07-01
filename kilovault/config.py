@@ -133,28 +133,29 @@ class Config:
         """Clamp out-of-range settings to safe values; return warning strings."""
         warnings = []
 
-        def clamp(obj, attr, lo, hi, name):
+        def clamp(obj, attr, lo, hi, name, default):
             v = getattr(obj, attr)
             try:
                 v = float(v)
             except (TypeError, ValueError):
-                warnings.append(f"{name} is not a number; using default")
+                warnings.append(f"{name} is not a number; using {default}")
+                setattr(obj, attr, default)
                 return
-            if v < lo or v > hi:
-                nv = min(max(v, lo), hi)
+            nv = min(max(v, lo), hi)
+            if nv != v:
                 warnings.append(f"{name}={v} out of range [{lo},{hi}]; using {nv}")
-                setattr(obj, attr, nv)  # float; port is re-cast to int below
+            setattr(obj, attr, nv)  # always normalize to float (port re-cast below)
 
-        clamp(self, "log_interval", 0.1, 3600, "log_interval")
-        clamp(self, "retention_days", 0, 36500, "retention_days")
-        clamp(self.web, "port", 1, 65535, "web.port")
+        clamp(self, "log_interval", 0.1, 3600, "log_interval", 10.0)
+        clamp(self, "retention_days", 0, 36500, "retention_days", 90.0)
+        clamp(self.web, "port", 1, 65535, "web.port", 8765)
         a = self.alarms
-        clamp(a, "temp_low", -40, 100, "alarms.temp_low")
-        clamp(a, "temp_high", -40, 100, "alarms.temp_high")
-        clamp(a, "soc_low", 0, 100, "alarms.soc_low")
-        clamp(a, "soc_critical", 0, 100, "alarms.soc_critical")
-        clamp(a, "voltage_low", 0, 60, "alarms.voltage_low")
-        clamp(a, "voltage_high", 0, 60, "alarms.voltage_high")
+        clamp(a, "temp_low", -40, 100, "alarms.temp_low", 2.0)
+        clamp(a, "temp_high", -40, 100, "alarms.temp_high", 45.0)
+        clamp(a, "soc_low", 0, 100, "alarms.soc_low", 15.0)
+        clamp(a, "soc_critical", 0, 100, "alarms.soc_critical", 8.0)
+        clamp(a, "voltage_low", 0, 60, "alarms.voltage_low", 11.5)
+        clamp(a, "voltage_high", 0, 60, "alarms.voltage_high", 14.6)
 
         if a.temp_low >= a.temp_high:
             warnings.append("alarms.temp_low >= temp_high; disabling those alarms")

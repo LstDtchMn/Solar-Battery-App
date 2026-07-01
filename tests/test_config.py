@@ -35,3 +35,13 @@ def test_validate_rejects_bad_transport():
 
 def test_validate_ok_config_no_warnings():
     assert Config().validate() == []
+
+
+def test_validate_non_numeric_does_not_crash():
+    c = Config()
+    c.web.port = "notaport"     # bad string must not crash validate()
+    c.log_interval = "5"        # in-range string should normalize to float
+    w = c.validate()
+    assert w  # warned
+    assert isinstance(c.web.port, int) and c.web.port == 8765
+    assert c.log_interval == 5.0 and isinstance(c.log_interval, float)
