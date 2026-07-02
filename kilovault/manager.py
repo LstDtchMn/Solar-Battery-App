@@ -200,6 +200,10 @@ class Manager:
                 except asyncio.QueueFull:
                     pass
 
+    async def broadcast(self, message: dict) -> None:
+        """Public: push a message to all SSE subscribers (e.g. display changes)."""
+        await self._publish(message)
+
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=256)
         self._subscribers.add(q)

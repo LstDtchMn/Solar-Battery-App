@@ -90,6 +90,10 @@ class WebConfig:
     # auto-generate a persistent one (stored in the data dir), so a phone's
     # saved link keeps working across restarts; set a fixed value for a kiosk.
     token: str = ""
+    # Host/IP to advertise in the phone URL + QR code. Set this to the Pi's
+    # hotspot address (e.g. 10.42.0.1) so the link is stable and correct even
+    # when there's no router to auto-detect an address from. Blank = auto-detect.
+    advertised_host: str = ""
 
 
 @dataclass

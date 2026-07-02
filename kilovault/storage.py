@@ -78,6 +78,11 @@ CREATE TABLE IF NOT EXISTS events (
     cleared_ts  REAL
 );
 CREATE INDEX IF NOT EXISTS idx_events_addr ON events(address, raised_ts);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT
+);
 """
 
 
@@ -363,6 +368,29 @@ class Storage:
                 "INSERT INTO thresholds(address,overrides) VALUES(?,?) "
                 "ON CONFLICT(address) DO UPDATE SET overrides=excluded.overrides",
                 (address, payload),
+            )
+            self._conn.commit()
+
+    # -- generic settings (small JSON key/value; e.g. display prefs) -----
+    def get_setting(self, key: str, default=None):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM settings WHERE key=?", (key,)
+            ).fetchone()
+        if not row or row["value"] is None:
+            return default
+        try:
+            return json.loads(row["value"])
+        except ValueError:
+            return default
+
+    def set_setting(self, key: str, value) -> None:
+        payload = json.dumps(value)
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO settings(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, payload),
             )
             self._conn.commit()
 

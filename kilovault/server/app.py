@@ -316,6 +316,14 @@ class DashboardServer:
             except (TypeError, ValueError):
                 return await self._json(writer, {"ok": False, "error": "bad capacity"}, 400)
 
+        if method == "GET" and path == "/api/display":
+            return await self._json(writer, self._display_settings())
+
+        if method == "POST" and path == "/api/display":
+            saved = self._save_display(_json_body(body))
+            await self._publish_display(saved)
+            return await self._json(writer, {"ok": True, "display": saved})
+
         return await self._send(writer, 404, "text/plain", b"not found")
 
     # ------------------------------------------------------------------
@@ -365,8 +373,13 @@ class DashboardServer:
 
     def _phone_url(self) -> str:
         """The URL a phone on the same Wi-Fi should open (includes the token)."""
-        host = self._lan_ip() if self.host in ("0.0.0.0", "::") else \
-            ("localhost" if self.host in _LOOPBACK else self.host)
+        advertised = (getattr(self.manager.cfg.web, "advertised_host", "") or "").strip()
+        if advertised:
+            host = advertised
+        elif self.host in ("0.0.0.0", "::"):
+            host = self._lan_ip()
+        else:
+            host = "localhost" if self.host in _LOOPBACK else self.host
         q = f"?token={self.token}" if self.token else ""
         return f"http://{host}:{self.port}/{q}"
 
@@ -376,6 +389,47 @@ class DashboardServer:
             "lan_accessible": self.host in ("0.0.0.0", "::"),
             "has_token": bool(self.token),
         }
+
+    # -- display / kiosk customization ----------------------------------
+    _DISPLAY_DEFAULTS = {
+        "preset": "bank",         # bank | soc | single
+        "focus_address": "",      # which battery the 'single'/'soc' presets show
+        "font_scale": 1.0,        # 0.8 .. 2.5
+        "theme": "dark",          # dark | light
+    }
+
+    def _display_settings(self) -> dict:
+        stored = self.manager.storage.get_setting("display", {}) or {}
+        out = dict(self._DISPLAY_DEFAULTS)
+        if isinstance(stored, dict):
+            out.update({k: stored[k] for k in out if k in stored})
+        return out
+
+    def _save_display(self, data: dict) -> dict:
+        cur = self._display_settings()
+        preset = str(data.get("preset", cur["preset"]))
+        if preset not in ("bank", "soc", "single"):
+            preset = cur["preset"]
+        theme = str(data.get("theme", cur["theme"]))
+        if theme not in ("dark", "light"):
+            theme = cur["theme"]
+        try:
+            scale = float(data.get("font_scale", cur["font_scale"]))
+        except (TypeError, ValueError):
+            scale = cur["font_scale"]
+        scale = max(0.8, min(2.5, scale))
+        focus = str(data.get("focus_address", cur["focus_address"]))[:64]
+        saved = {"preset": preset, "focus_address": focus,
+                 "font_scale": round(scale, 2), "theme": theme}
+        self.manager.storage.set_setting("display", saved)
+        return saved
+
+    async def _publish_display(self, saved: dict) -> None:
+        # Push to every open client so the kiosk + phones update live.
+        try:
+            await self.manager.broadcast({"type": "display", "display": saved})
+        except Exception:
+            log.debug("display broadcast failed", exc_info=True)
 
     def _preflight(self) -> dict:
         """Environment capability check for the setup wizard."""
