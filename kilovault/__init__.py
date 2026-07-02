@@ -25,7 +25,7 @@ from .protocol import (  # noqa: F401
     ALARM_BITS,
 )
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 __all__ = [
     "BatterySample",
     "FrameAssembler",

@@ -2,6 +2,21 @@
 
 All notable changes to the KiloVault HLX+ Monitor.
 
+## 1.4.0
+
+Configure everything from the dashboard, and a friendlier hotspot.
+
+### Added
+- **In-app settings editor** (⚙ Settings): edit global alarm thresholds, the
+  hardware alert level (critical / any / none), and history log interval +
+  retention — applied live and persisted on the box, so nothing needs a
+  `config.toml` edit and it survives a reboot.
+- **Captive portal**: joining the Pi's hotspot auto-opens the dashboard (like a
+  hotel Wi-Fi login) — a tiny stdlib redirect service on port 80 plus a DNS
+  catch-all, wired into `deploy/setup-hotspot.sh` (skip with `KV_NO_CAPTIVE=1`).
+- **Fleet display preset**: a compact grid of all batteries for large banks,
+  alongside bank / giant-SoC / single-battery.
+
 ## 1.3.0
 
 Standalone cabin operation with **no Wi‑Fi**: the Pi becomes its own network and

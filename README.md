@@ -123,10 +123,11 @@ cd ~/Solar-Battery-App && sudo bash deploy/install-pi.sh
 ```
 
 **No Wi-Fi in the cabin?** The Pi can broadcast **its own network** so your phone
-connects directly (no router) — `deploy/setup-hotspot.sh`. The touchscreen is
-**customizable** (📺 Screen: bank overview / giant charge % / single-battery,
-plus text size and light theme), and a 📱 QR code opens the dashboard on your
-iPhone without typing.
+connects directly (no router) — `deploy/setup-hotspot.sh`. Joining it **auto-opens
+the dashboard** (captive portal). The touchscreen is **customizable** (📺 Screen:
+bank / fleet / giant charge % / single-battery, plus text size and light theme),
+alarm thresholds and logging are editable in-app (**⚙ Settings**, no config file),
+and a 📱 QR code opens the dashboard on your iPhone without typing.
 
 Full walkthrough (SD imaging, hotspot, kiosk, screen layouts, iPhone "Add to
 Home Screen", watchdog, siren alerts, SD-card longevity):

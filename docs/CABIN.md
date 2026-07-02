@@ -161,12 +161,18 @@ Tap the **📺 Screen** button in the top bar to change the layout without any
 config files:
 
 - **Bank overview** — every battery at once (the default).
+- **Fleet** — a compact grid, for when you have many batteries.
 - **Giant charge %** — one huge state-of-charge number, readable across the room.
 - **Single battery** — one battery, enlarged (pick which under *Focus battery*).
 
 You can also set the **text size** (great for a tiny screen) and a **light theme**
 for a bright cabin. The choice is saved on the box, so the kiosk comes back up
 the same way after a power cut — and any phone you have connected updates live.
+
+The **⚙ Settings** button next to it changes *behaviour* — alarm thresholds (when
+you get warned), whether the siren fires on warnings or only critical alarms, and
+how long history is kept. These are saved on the box too, so you never have to
+edit a config file.
 
 ---
 
@@ -182,8 +188,10 @@ any time:
 sudo bash ~/Solar-Battery-App/deploy/setup-hotspot.sh "KiloVault-Cabin" "your-password"
 ```
 
-It prints the network name and password. On your phone, join that Wi‑Fi, then
-open the dashboard (or use the **📱 Phone** QR). The hotspot starts on every boot.
+It prints the network name and password. On your phone, **join that Wi‑Fi** — the
+dashboard should **pop open on its own** (a captive‑portal page, like a hotel
+Wi‑Fi login). If it doesn’t, open `http://10.42.0.1:8765/` or tap the **📱 Phone**
+QR. The hotspot and the auto‑open both start on every boot.
 
 > One‑time note: Wi‑Fi access‑point mode needs your **country** set. If the
 > script warns about it, run `sudo raspi-config` → *Localisation* → *WLAN

@@ -1,0 +1,18 @@
+[Unit]
+Description=KiloVault captive portal (auto-opens the dashboard on hotspot join)
+After=network.target NetworkManager.service
+
+[Service]
+Type=simple
+# Runs as root to bind port 80; it only reads the config and serves a static
+# redirect page (no writes). Installed by deploy/setup-hotspot.sh.
+ExecStart=/usr/bin/python3 /usr/local/bin/kilovault-captive.py /home/pi/kilovault/config.toml
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

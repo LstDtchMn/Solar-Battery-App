@@ -63,6 +63,23 @@ nmcli connection modify "$CON" \
   wifi-sec.key-mgmt wpa-psk \
   wifi-sec.psk "$PASSWORD"
 
+# --- Captive portal: pop the dashboard open when a phone joins ----------------
+# Skip with KV_NO_CAPTIVE=1.
+if [ "${KV_NO_CAPTIVE:-0}" != "1" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  echo "--> Setting up the captive portal (auto-opens the dashboard)…"
+  # Point every DNS name at the Pi so the phone's internet-probe hits us.
+  mkdir -p /etc/NetworkManager/dnsmasq-shared.d
+  echo "address=/#/$AP_IP" > /etc/NetworkManager/dnsmasq-shared.d/kilovault-captive.conf
+  # A tiny redirect server on port 80.
+  install -m 0755 "$SCRIPT_DIR/captive_portal.py" /usr/local/bin/kilovault-captive.py
+  sed "s#/home/pi/kilovault/config.toml#$CONFIG#g" \
+    "$SCRIPT_DIR/kilovault-captive.service" > /etc/systemd/system/kilovault-captive.service
+  systemctl daemon-reload
+  systemctl enable --now kilovault-captive.service \
+    || echo "!! captive portal service failed to start (dashboard still works directly)."
+fi
+
 nmcli connection up "$CON"
 
 # Point the monitor at the hotspot address so the phone URL + QR are correct.
@@ -91,9 +108,12 @@ echo "  On your phone, join this Wi-Fi network:"
 echo "    Name (SSID):  $SSID"
 echo "    Password:     $PASSWORD"
 echo
-echo "  Then open the dashboard (or tap the 📱 Phone button to scan a QR):"
-echo "    http://$AP_IP:8765/"
+echo "  Once joined, the dashboard should pop up on its own. If not, open:"
+echo "    http://$AP_IP:8765/   (or tap the 📱 Phone button to scan a QR)"
 echo
-echo "  The hotspot starts automatically on every boot."
-echo "  To remove it later:  sudo nmcli connection delete $CON"
+echo "  The hotspot + captive portal start automatically on every boot."
+echo "  To remove them later:"
+echo "    sudo nmcli connection delete $CON"
+echo "    sudo systemctl disable --now kilovault-captive"
+echo "    sudo rm -f /etc/NetworkManager/dnsmasq-shared.d/kilovault-captive.conf"
 echo "=================================================================="
