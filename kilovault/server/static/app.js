@@ -31,10 +31,21 @@
   setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString(); }, 1000);
 
   // ---- SSE ----------------------------------------------------------
+  let es = null;
   function connect() {
-    const es = new EventSource(U("/api/stream"));
+    if (es) { try { es.close(); } catch (_) {} }
+    es = new EventSource(U("/api/stream"));
     es.onopen = () => setConn(true);
-    es.onerror = () => { setConn(false); };
+    es.onerror = () => {
+      setConn(false);
+      // EventSource auto-retries while CONNECTING, but once it reaches CLOSED
+      // (e.g. a non-2xx from the server/proxy) it never retries — reconnect
+      // manually so the dashboard recovers without a page reload.
+      if (es && es.readyState === EventSource.CLOSED) {
+        try { es.close(); } catch (_) {}
+        setTimeout(connect, 3000);
+      }
+    };
     es.onmessage = (e) => {
       let msg;
       try { msg = JSON.parse(e.data); } catch (_) { return; }
@@ -67,7 +78,10 @@
       bankState = s.bank;
       (s.batteries || []).forEach((b) => { batteries[b.address] = b; });
       $("transport-pill").textContent = s.transport;
-      renderBank();
+      // Refresh the cards + selector too — if the SSE stream silently stalls
+      // (proxy buffering, collector hiccup) this poll is the only thing keeping
+      // the per-battery cards from freezing on stale values.
+      renderBank(); renderCards(); populateBatterySelect();
     } catch (_) {}
   }, 5000);
 
@@ -205,7 +219,8 @@
       setV(card, ".temp", fmt(s.temperature, 1) + " °C");
       setV(card, ".cycles", s.cycles);
       const dv = card.querySelector(".delta");
-      dv.textContent = Math.round(s.cell_delta * 1000) + " mV";
+      dv.textContent = Number.isFinite(s.cell_delta)
+        ? Math.round(s.cell_delta * 1000) + " mV" : "—";
       dv.className = "v delta " + (s.cell_delta >= 0.3 ? "neg" : "");
 
       renderCells(card, s);
@@ -225,8 +240,9 @@
     const wrap = card.querySelector(".cellbars");
     const cells = s.cell_voltages || [];
     const lo = s.min_cell, hi = s.max_cell;
+    const dmv = Number.isFinite(s.cell_delta) ? Math.round(s.cell_delta * 1000) : "—";
     card.querySelector(".cellinfo").textContent =
-      `min ${fmt(lo, 3)}V · max ${fmt(hi, 3)}V · Δ ${Math.round(s.cell_delta * 1000)}mV`;
+      `min ${fmt(lo, 3)}V · max ${fmt(hi, 3)}V · Δ ${dmv}mV`;
     // scale bars within the active cell range for visual contrast
     const span = Math.max(0.02, hi - lo);
     wrap.innerHTML = "";
@@ -258,12 +274,18 @@
     const cur = (batteries[address] || {}).name || address;
     const name = prompt("Rename battery", cur);
     if (name == null || !name.trim()) return;
-    await fetch(U("/api/rename"), {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address, name: name.trim() }),
-    });
-    if (batteries[address]) batteries[address].name = name.trim();
-    renderCards(); populateBatterySelect();
+    try {
+      const r = await fetch(U("/api/rename"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, name: name.trim() }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      // Only reflect the new name locally once the server accepted it.
+      if (batteries[address]) batteries[address].name = name.trim();
+      renderCards(); populateBatterySelect();
+    } catch (_) {
+      alert("Could not rename the battery — check the connection and try again.");
+    }
   }
 
   // ---- per-battery alarm thresholds ---------------------------------
@@ -299,10 +321,15 @@
         <button class="btn" id="thr-save">Save</button>
       </div>`);
     async function post(overrides) {
-      await fetch(U("/api/thresholds"), { method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, overrides }) });
-      closeModal();
+      try {
+        const r = await fetch(U("/api/thresholds"), { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address, overrides }) });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        closeModal();
+      } catch (_) {
+        alert("Could not save thresholds — check the connection and try again.");
+      }
     }
     $("thr-save").onclick = () => {
       const overrides = {};
@@ -327,16 +354,22 @@
     if (cur) sel.value = cur;
   }
 
+  // Monotonic request tokens so a slow response for a previously-selected
+  // battery/range can't overwrite the chart with stale (wrong-battery) data.
+  let histReq = 0, summaryReq = 0;
+
   async function loadHistory() {
     const addr = $("hist-battery").value;
     const minutes = $("hist-range").value;
     if (!addr) return;
+    const my = ++histReq;
     $("hist-export").href = U(`/api/export.csv?address=${encodeURIComponent(addr)}&minutes=${minutes}`);
     let data;
     try {
       const r = await fetch(U(`/api/history?address=${encodeURIComponent(addr)}&minutes=${minutes}`));
       data = await r.json();
     } catch (_) { return; }
+    if (my !== histReq) return;  // a newer request superseded this one
     const rows = data.rows || [];
     const col = (k) => rows.map((r) => [r.ts, r[k]]);
     KVCharts.lineChart($("chart-voltage"), [{ name: "V", color: "#38d39f", points: col("voltage") }], { unit: "V" });
@@ -350,11 +383,13 @@
   async function loadSummary(addr) {
     const tb = $("summary-body");
     if (!tb) return;
+    const my = ++summaryReq;
     tb.innerHTML = "";  // clear first so a failed/switched request never shows stale rows
     let data;
     try {
       data = await (await fetch(U(`/api/summary?address=${encodeURIComponent(addr)}&days=30`))).json();
     } catch (_) { return; }
+    if (my !== summaryReq) return;  // superseded by a newer selection
     (data.days || []).forEach((d) => {
       const tr = document.createElement("tr");
       const cells = [
@@ -379,8 +414,13 @@
   $("hist-refresh").addEventListener("click", loadHistory);
   $("hist-battery").addEventListener("change", loadHistory);
   $("hist-range").addEventListener("change", loadHistory);
+  let resizeTimer = null;
   window.addEventListener("resize", () => {
-    if ($("tab-history").classList.contains("active")) loadHistory();
+    // Debounce: a drag-resize fires continuously; only redraw once it settles.
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if ($("tab-history").classList.contains("active")) loadHistory();
+    }, 250);
   });
 
   // ---- events -------------------------------------------------------
@@ -451,8 +491,12 @@
   });
   document.addEventListener("click", (e) => {
     const t = e.target.closest(".tip");
-    if (t) { e.stopPropagation(); if (tipPinned === t) hideTip(); else { tipPinned = t; showTip(t); } }
-    else if (tipPinned) hideTip();
+    // Ignore decorative .tip icons that carry no data-tip, otherwise they'd
+    // "pin" an empty bubble and freeze hover tooltips on the real ones.
+    if (t && t.getAttribute("data-tip")) {
+      e.stopPropagation();
+      if (tipPinned === t) hideTip(); else { tipPinned = t; showTip(t); }
+    } else if (tipPinned) hideTip();
   });
   window.addEventListener("scroll", hideTip, true);
 
@@ -565,7 +609,7 @@
     if (wizState.method === "ble") {
       const bt = pf.bluetooth || {};
       if (bt.installed) {
-        checks.push(ok(`Bluetooth support installed (bleak ${esc(bt.version || "")})`));
+        checks.push(ok(`Bluetooth support installed (bleak ${bt.version || ""})`));
       } else {
         hardFail = true;
         checks.push(bad("Bluetooth support not installed", "Run: pip install bleak — or use the demo / an ESP32."));
@@ -609,7 +653,7 @@
         if (!okResp && !$("wiz-err")) {
           const div = document.createElement("div");
           div.id = "wiz-err";
-          div.innerHTML = bad("Could not start that source", esc((j && j.error) || "Please try again or pick another option."));
+          div.innerHTML = bad("Could not start that source", (j && j.error) || "Please try again or pick another option.");
           $("wiz-checks").appendChild(div);
         }
       } catch (e) { okResp = false; }
@@ -640,7 +684,7 @@
       ["Bluetooth (bleak)", d.bleak_version || "not installed"],
       ["Serial (pyserial)", d.pyserial_version || "not installed"],
       ["Hardware alerting", d.hardware_alerting || "off"],
-      ["Batteries online", `${d.online_count} / ${d.battery_count}`],
+      ["Batteries online", `${d.online_count ?? 0} / ${d.battery_count ?? 0}`],
       ["Data folder", d.db_path],
     ];
     $("diag-system").innerHTML = sys.map(([k, v]) =>
