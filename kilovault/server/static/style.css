@@ -282,3 +282,10 @@ canvas { width: 100%; display: block; }
 .summary-table th, .summary-table td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid var(--line); }
 .summary-table th { color: var(--muted); font-weight: 600; }
 .summary-table td:first-child { font-weight: 600; }
+
+/* "View on your phone" QR modal */
+.qr-wrap { display: flex; justify-content: center; margin: .5rem 0 1rem; }
+.qr-img { width: 240px; height: 240px; border-radius: 10px; background: #fff;
+          padding: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.35); }
+.qr-url { text-align: center; word-break: break-all; font-size: .85rem; margin: .25rem 0 .75rem; }
+.qr-url a { color: var(--accent); }

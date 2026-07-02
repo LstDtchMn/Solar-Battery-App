@@ -149,6 +149,21 @@ def test_send_neutralizes_injected_content_disposition(tmp_path):
         s.manager.storage.close()
 
 
+def test_connect_info_url_encodes_as_qr(tmp_path):
+    from kilovault import qrcode as qr
+    s = _server(tmp_path, "0.0.0.0")
+    try:
+        info = s._connect_info()
+        assert info["lan_accessible"] is True
+        assert info["has_token"] is True
+        assert info["url"].startswith("http://") and "token=" in info["url"]
+        # The phone URL must be encodable as a QR (what /api/qr.svg serves).
+        m = qr.matrix(info["url"])
+        assert len(m) >= 21
+    finally:
+        s.manager.storage.close()
+
+
 def test_set_capacity_rejects_non_positive(tmp_path):
     cfg = Config()
     cfg.db_path = tmp_path / "h.db"

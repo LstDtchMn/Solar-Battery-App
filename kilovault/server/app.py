@@ -251,6 +251,20 @@ class DashboardServer:
         if method == "GET" and path == "/api/preflight":
             return await self._json(writer, self._preflight())
 
+        if method == "GET" and path == "/api/connect":
+            return await self._json(writer, self._connect_info())
+
+        if method == "GET" and path == "/api/qr.svg":
+            url = _one(params, "url") or self._phone_url()
+            try:
+                from .. import qrcode as _qr
+                svg = _qr.svg(url, scale=8, border=4)
+            except Exception as exc:
+                return await self._send(writer, 500, "text/plain",
+                                        f"qr failed: {exc}".encode())
+            return await self._send(writer, 200, "image/svg+xml", svg.encode(),
+                                    extra_headers={"Cache-Control": "no-store"})
+
         if method == "POST" and path == "/api/test-bluetooth":
             from ..transports.ble import quick_scan
             timeout = _num(params, "timeout", 5.0, float, 1.0, 15.0)
@@ -324,6 +338,44 @@ class DashboardServer:
             lambda: self.manager.storage.history(
                 addr, since=since, limit=20000, max_points=points))
         return await self._json(writer, {"address": addr, "rows": rows})
+
+    def _lan_ip(self) -> str:
+        """Best-guess LAN IP of this machine (works offline; no traffic sent)."""
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                # Picks the outbound interface without sending anything;
+                # 192.0.2.1 is TEST-NET-1 (reserved, never routed).
+                s.connect(("192.0.2.1", 1))
+                ip = s.getsockname()[0]
+            finally:
+                s.close()
+            if ip and not ip.startswith("127."):
+                return ip
+        except Exception:
+            pass
+        try:
+            ip = socket.gethostbyname(socket.gethostname())
+            if ip and not ip.startswith("127."):
+                return ip
+        except Exception:
+            pass
+        return "127.0.0.1"
+
+    def _phone_url(self) -> str:
+        """The URL a phone on the same Wi-Fi should open (includes the token)."""
+        host = self._lan_ip() if self.host in ("0.0.0.0", "::") else \
+            ("localhost" if self.host in _LOOPBACK else self.host)
+        q = f"?token={self.token}" if self.token else ""
+        return f"http://{host}:{self.port}/{q}"
+
+    def _connect_info(self) -> dict:
+        return {
+            "url": self._phone_url(),
+            "lan_accessible": self.host in ("0.0.0.0", "::"),
+            "has_token": bool(self.token),
+        }
 
     def _preflight(self) -> dict:
         """Environment capability check for the setup wizard."""

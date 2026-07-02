@@ -777,6 +777,28 @@
     if (btn.dataset.tab === "diag") diagTimer = setInterval(() => { refreshDiag(); refreshLog(); }, 4000);
   }));
 
+  // ---- view on your phone (offline QR) ------------------------------
+  async function openConnect() {
+    let info = { url: location.href, lan_accessible: false };
+    try { info = await (await fetch(U("/api/connect"))).json(); } catch (_) {}
+    const url = info.url || location.href;
+    const note = info.lan_accessible
+      ? "Scan this with your phone's camera — it must be on the same Wi-Fi as this monitor."
+      : "This monitor is only reachable on this computer. Start it with LAN access "
+        + "(or run it on the cabin box) to view it from a phone.";
+    openModal(`
+      <button class="close-x">×</button>
+      <h2>View on your phone</h2>
+      <p class="sub">${esc(note)}</p>
+      <div class="qr-wrap"><img class="qr-img" alt="QR code linking to the dashboard"
+           src="${U("/api/qr.svg")}"></div>
+      <p class="qr-url"><a href="${esc(url)}">${esc(url)}</a></p>
+      <p class="sub">On iPhone: open the link in Safari, then tap <b>Share → Add to
+        Home Screen</b> for a full-screen app icon.</p>
+      <div class="wiz-actions"><span></span><button class="btn" data-close>Done</button></div>`);
+  }
+  const btnPhone = $("btn-phone"); if (btnPhone) btnPhone.addEventListener("click", openConnect);
+
   // Token-aware download links (Diagnostics tab).
   const dlLog = $("dl-log"); if (dlLog) dlLog.href = U("/api/log?kb=256");
   const dlDiag = $("dl-diag"); if (dlDiag) dlDiag.href = U("/api/diagnostics.zip");
