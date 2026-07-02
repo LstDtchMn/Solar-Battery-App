@@ -218,22 +218,26 @@ class Storage:
 
         with self._lock:
             step = 1
+            n = 0
             if max_points and max_points > 0:
                 n = self._conn.execute(
                     f"SELECT COUNT(*) FROM samples WHERE {where}", args
                 ).fetchone()[0]
                 if n > max_points:
-                    step = n // max_points + 1
+                    step = -(-n // max_points)  # ceil(n / max_points) >= 2
             if step > 1:
                 # Number rows per-address by time (the global AUTOINCREMENT id is
                 # shared across batteries, so `id % step` would drop/bias one
                 # battery's rows when samples interleave). ROW_NUMBER is contiguous
                 # per address, giving an even sample across the whole window.
+                # Anchor on the first row ((rn-1) % step) and always include the
+                # newest (rn = n) so both endpoints of the chart are present.
+                # Order by rn (not ts) so callers may request columns without ts.
                 q = (f"SELECT {cols} FROM ("
                      f"  SELECT {cols}, ROW_NUMBER() OVER (ORDER BY ts) AS rn "
                      f"  FROM samples WHERE {where}"
-                     f") WHERE rn % ? = 0 ORDER BY ts ASC LIMIT ?")
-                rows = self._conn.execute(q, args + [step, limit]).fetchall()
+                     f") WHERE (rn - 1) % ? = 0 OR rn = ? ORDER BY rn ASC LIMIT ?")
+                rows = self._conn.execute(q, args + [step, n, limit]).fetchall()
                 return [dict(r) for r in rows]
             q = f"SELECT {cols} FROM samples WHERE {where} ORDER BY ts DESC LIMIT ?"
             rows = self._conn.execute(q, args + [limit]).fetchall()
@@ -335,9 +339,10 @@ class Storage:
         if not row or not row["overrides"]:
             return {}
         try:
-            return json.loads(row["overrides"])
+            parsed = json.loads(row["overrides"])
         except ValueError:
             return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     def get_all_thresholds(self) -> Dict[str, dict]:
         with self._lock:
@@ -345,9 +350,10 @@ class Storage:
         out = {}
         for r in rows:
             try:
-                out[r["address"]] = json.loads(r["overrides"]) if r["overrides"] else {}
+                parsed = json.loads(r["overrides"]) if r["overrides"] else {}
             except ValueError:
-                out[r["address"]] = {}
+                parsed = {}
+            out[r["address"]] = parsed if isinstance(parsed, dict) else {}
         return out
 
     def set_thresholds(self, address: str, overrides: dict) -> None:

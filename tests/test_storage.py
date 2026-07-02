@@ -38,6 +38,30 @@ def test_insert_and_history(store):
     assert "voltage" in rows[0]
 
 
+def test_history_downsample_keeps_endpoints_and_density(store):
+    base = 1_000_000.0
+    for i in range(1000):
+        store.insert_sample(make_sample(ts=base + i, soc=50.0))
+    rows = store.history("AA", max_points=100, limit=20000)
+    # roughly the requested density (not a wild undershoot), and ascending
+    assert 90 <= len(rows) <= 130
+    assert rows == sorted(rows, key=lambda r: r["ts"])
+    # both endpoints of the window are present (oldest + newest)
+    assert rows[0]["ts"] == pytest.approx(base)
+    assert rows[-1]["ts"] == pytest.approx(base + 999)
+
+
+def test_history_downsample_without_ts_column(store):
+    # A caller may request columns that don't include ts; the downsample query
+    # must still work (it orders by row number, not ts).
+    base = 2_000_000.0
+    for i in range(500):
+        store.insert_sample(make_sample(ts=base + i, soc=50.0))
+    rows = store.history("AA", columns=("voltage", "current"), max_points=50,
+                         limit=20000)
+    assert rows and "voltage" in rows[0] and "ts" not in rows[0]
+
+
 def test_latest(store):
     base = time.time()
     store.insert_sample(make_sample(ts=base, soc=50))

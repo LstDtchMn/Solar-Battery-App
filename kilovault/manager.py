@@ -127,7 +127,8 @@ class Manager:
             self._update_hardware()
 
             now = sample.timestamp or time.time()
-            if now - self._last_log.get(sample.address, 0) >= self.cfg.log_interval:
+            if (getattr(sample, "crc_ok", True)
+                    and now - self._last_log.get(sample.address, 0) >= self.cfg.log_interval):
                 try:
                     self.storage.insert_sample(sample)
                     # Persist energy counters so they survive a restart.
