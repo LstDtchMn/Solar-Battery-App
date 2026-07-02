@@ -330,3 +330,24 @@ body.theme-light {
 .set-h { font-size: .95rem; margin: 1.1rem 0 .5rem; color: var(--text);
          border-bottom: 1px solid var(--line); padding-bottom: .3rem; }
 .set-h small { color: var(--muted); font-weight: 400; }
+
+/* Fleet: compact grid for many batteries (name + SoC + V/A/W at a glance). */
+body.display-fleet .tabs,
+body.display-fleet .tabpane:not(#tab-live) { display: none; }
+body.display-fleet #battery-grid {
+  display: grid; gap: .5rem;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+body.display-fleet .card { padding: .55rem .6rem; }
+body.display-fleet .card .cells,
+body.display-fleet .card .card-name .edit,
+body.display-fleet .card .card-name .cfg,
+body.display-fleet .card .soc-meta .rem,
+body.display-fleet .card .soc-meta .soh,
+body.display-fleet .card .soc-meta .eta,
+body.display-fleet .card .kv-grid .kv:nth-child(n+4) { display: none; }
+body.display-fleet .card .ring { width: 54px; height: 54px; }
+body.display-fleet .card .soc-row { gap: .5rem; }
+body.display-fleet .card .kv-grid { grid-template-columns: repeat(3, 1fr); gap: .3rem; }
+body.display-fleet .card .kv label { font-size: .62rem; }
+body.display-fleet .card .kv .v { font-size: .82rem; }

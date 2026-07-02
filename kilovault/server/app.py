@@ -415,7 +415,7 @@ class DashboardServer:
     def _save_display(self, data: dict) -> dict:
         cur = self._display_settings()
         preset = str(data.get("preset", cur["preset"]))
-        if preset not in ("bank", "soc", "single"):
+        if preset not in ("bank", "soc", "single", "fleet"):
             preset = cur["preset"]
         theme = str(data.get("theme", cur["theme"]))
         if theme not in ("dark", "light"):

@@ -805,7 +805,7 @@
 
   // ---- display / kiosk presets --------------------------------------
   let displayCfg = { preset: "bank", focus_address: "", font_scale: 1.0, theme: "dark" };
-  const PRESETS = ["bank", "soc", "single"];
+  const PRESETS = ["bank", "soc", "single", "fleet"];
 
   function applyFocus() {
     const cards = Array.from(document.querySelectorAll("#battery-grid .card"));
@@ -820,7 +820,8 @@
     displayCfg = Object.assign({}, displayCfg, cfg || {});
     const preset = PRESETS.includes(displayCfg.preset) ? displayCfg.preset : "bank";
     const b = document.body;
-    b.classList.remove("display-bank", "display-soc", "display-single", "theme-light");
+    b.classList.remove("display-bank", "display-soc", "display-single",
+                       "display-fleet", "theme-light");
     b.classList.add("display-" + preset);
     if (displayCfg.theme === "light") b.classList.add("theme-light");
     const scale = Math.max(0.8, Math.min(2.5, Number(displayCfg.font_scale) || 1));
@@ -842,6 +843,7 @@
         <label>Layout
           <select id="disp-preset">
             <option value="bank">Bank overview — all batteries</option>
+            <option value="fleet">Fleet — compact grid for many batteries</option>
             <option value="soc">Giant charge % — one big number</option>
             <option value="single">Single battery — large</option>
           </select>
