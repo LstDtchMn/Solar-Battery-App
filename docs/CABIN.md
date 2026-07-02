@@ -158,6 +158,13 @@ which rotates both together.
 
 ## 6. View it on your iPhone
 
+**Easiest: scan the QR code.** On the touchscreen (or any browser already
+showing the dashboard) tap the **📱 Phone** button in the top bar. It shows a QR
+code — point your iPhone camera at it and tap the link. No typing, no long token
+to copy. (The QR is generated on the box itself; it works with no internet.)
+
+Prefer to type it? 
+
 1. Make sure your iPhone is on the **same Wi‑Fi** as the Pi (your cabin router —
    no internet required, they just need to be on the same network).
 2. Open **Safari** and go to the **phone link** the installer printed. It looks

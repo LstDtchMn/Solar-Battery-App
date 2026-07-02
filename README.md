@@ -41,6 +41,8 @@ again.
 | **State-of-Health estimate** | ❌ | ✅ |
 | **CSV export** | ❌ | ✅ |
 | **Runs headless / on a server, reachable from your phone** | ❌ | ✅ |
+| **Phone access via scannable QR code + installable web app** | ❌ | ✅ (offline QR) |
+| **Standalone Raspberry Pi touchscreen cabin box** | ❌ | ✅ |
 | **Guided setup wizard + connection diagnostics page** | ❌ | ✅ |
 | **In-app tooltips + glossary (plain-language help)** | ❌ | ✅ |
 | **Troubleshooting log + one-click diagnostics bundle** | ❌ | ✅ |
