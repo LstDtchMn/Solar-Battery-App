@@ -289,3 +289,39 @@ canvas { width: 100%; display: block; }
           padding: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.35); }
 .qr-url { text-align: center; word-break: break-all; font-size: .85rem; margin: .25rem 0 .75rem; }
 .qr-url a { color: var(--accent); }
+
+/* ============ Display presets (customizable kiosk screen) ============ */
+/* Giant charge %: hide everything but the big bank SoC number. */
+body.display-soc .tabs,
+body.display-soc .tabpane,
+body.display-soc .bank-energy { display: none; }
+body.display-soc .bank-grid { justify-content: center; }
+body.display-soc .bank-grid .metric { display: none; }
+body.display-soc .bank-grid .metric.big {
+  display: flex; flex-direction: column; align-items: center; gap: .4rem;
+}
+body.display-soc .bank-grid .metric.big .value { font-size: 9rem; line-height: 1; }
+body.display-soc .bank-grid .metric.big label { font-size: 1.6rem; }
+body.display-soc .bank-grid .metric.big .unit { font-size: 2.2rem; }
+
+/* Single battery: show only the focused card, enlarged. */
+body.display-single .tabs,
+body.display-single .tabpane:not(#tab-live) { display: none; }
+body.display-single #battery-grid .card { display: none; }
+body.display-single #battery-grid .card.focused {
+  display: block; max-width: 680px; margin: 1rem auto;
+}
+body.display-single #battery-grid .card.focused .ring { width: 150px; height: 150px; }
+body.display-single #battery-grid .card.focused .soc-num { font-size: 2.6rem; }
+
+/* Light theme (bright screens / daylight). */
+body.theme-light {
+  --bg: #eef1f6; --panel: #ffffff; --panel-2: #f3f5f9; --line: #d5dbe6;
+  --text: #10151d; --muted: #566173;
+}
+
+/* Screen-setup modal form. */
+.disp-form { display: grid; gap: .85rem; margin: .6rem 0 1rem; }
+.disp-form label { display: grid; gap: .3rem; font-size: .9rem; color: var(--muted); }
+.disp-form select, .disp-form input[type=range] { width: 100%; }
+.disp-form b { color: var(--text); }

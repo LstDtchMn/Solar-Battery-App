@@ -60,6 +60,8 @@
         // local refresh from current batteries for responsiveness.
         renderCards();
         maybeUpdateBank();
+      } else if (msg.type === "display") {
+        applyDisplay(msg.display);  // another client changed the screen layout
       }
     };
   }
@@ -146,12 +148,14 @@
       if (!card) { card = buildCard(bat); grid.appendChild(card); }
       updateCard(card, bat);
     });
+    applyFocus();  // keep the single-battery preset pointed at the right card
   }
 
   function buildCard(bat) {
     const card = document.createElement("div");
     card.className = "card";
     card.id = "card-" + cssId(bat.address);
+    card.dataset.address = bat.address;  // used by the single-battery display preset
     card.innerHTML = `
       <div class="card-head">
         <div class="card-name"><span class="nm"></span><span class="edit" title="Rename">✎</span><span class="cfg" title="Alarm thresholds">⚙</span></div>
@@ -799,6 +803,89 @@
   }
   const btnPhone = $("btn-phone"); if (btnPhone) btnPhone.addEventListener("click", openConnect);
 
+  // ---- display / kiosk presets --------------------------------------
+  let displayCfg = { preset: "bank", focus_address: "", font_scale: 1.0, theme: "dark" };
+  const PRESETS = ["bank", "soc", "single"];
+
+  function applyFocus() {
+    const cards = Array.from(document.querySelectorAll("#battery-grid .card"));
+    const single = displayCfg.preset === "single";
+    const focus = single
+      ? (cards.find((c) => c.dataset.address === displayCfg.focus_address) || cards[0] || null)
+      : null;
+    cards.forEach((c) => c.classList.toggle("focused", single && c === focus));
+  }
+
+  function applyDisplay(cfg) {
+    displayCfg = Object.assign({}, displayCfg, cfg || {});
+    const preset = PRESETS.includes(displayCfg.preset) ? displayCfg.preset : "bank";
+    const b = document.body;
+    b.classList.remove("display-bank", "display-soc", "display-single", "theme-light");
+    b.classList.add("display-" + preset);
+    if (displayCfg.theme === "light") b.classList.add("theme-light");
+    const scale = Math.max(0.8, Math.min(2.5, Number(displayCfg.font_scale) || 1));
+    b.style.zoom = String(scale);
+    applyFocus();
+  }
+
+  async function openDisplay() {
+    let cfg = displayCfg;
+    try { cfg = await (await fetch(U("/api/display"))).json(); } catch (_) {}
+    const opts = Object.values(batteries).map((bt) =>
+      `<option value="${esc(bt.address)}">${esc(bt.name || bt.address)}</option>`).join("");
+    openModal(`
+      <button class="close-x">×</button>
+      <h2>Screen setup</h2>
+      <p class="sub">Customize what this display shows. Saved on the box, so the
+        kiosk keeps it across reboots (and updates any connected phone live).</p>
+      <div class="disp-form">
+        <label>Layout
+          <select id="disp-preset">
+            <option value="bank">Bank overview — all batteries</option>
+            <option value="soc">Giant charge % — one big number</option>
+            <option value="single">Single battery — large</option>
+          </select>
+        </label>
+        <label>Focus battery <small>(for the single-battery layout)</small>
+          <select id="disp-focus"><option value="">First battery</option>${opts}</select>
+        </label>
+        <label>Text size <b id="disp-scale-val"></b>
+          <input type="range" id="disp-scale" min="0.8" max="2.5" step="0.1">
+        </label>
+        <label>Theme
+          <select id="disp-theme"><option value="dark">Dark</option><option value="light">Light (bright screens)</option></select>
+        </label>
+      </div>
+      <div class="wiz-actions">
+        <button class="btn btn-ghost" data-close>Cancel</button>
+        <button class="btn" id="disp-save">Apply</button>
+      </div>`);
+    $("disp-preset").value = cfg.preset || "bank";
+    $("disp-focus").value = cfg.focus_address || "";
+    $("disp-scale").value = cfg.font_scale || 1.0;
+    $("disp-theme").value = cfg.theme || "dark";
+    const showScale = () => { $("disp-scale-val").textContent = (+$("disp-scale").value).toFixed(1) + "×"; };
+    showScale();
+    $("disp-scale").addEventListener("input", showScale);
+    const read = () => ({
+      preset: $("disp-preset").value, focus_address: $("disp-focus").value,
+      font_scale: +$("disp-scale").value, theme: $("disp-theme").value,
+    });
+    $("disp-save").onclick = async () => {
+      const body = read();
+      try {
+        const r = await fetch(U("/api/display"), { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        applyDisplay(body);
+        closeModal();
+      } catch (_) {
+        alert("Could not save the screen settings — check the connection and try again.");
+      }
+    };
+  }
+  const btnDisplay = $("btn-display"); if (btnDisplay) btnDisplay.addEventListener("click", openDisplay);
+
   // Token-aware download links (Diagnostics tab).
   const dlLog = $("dl-log"); if (dlLog) dlLog.href = U("/api/log?kb=256");
   const dlDiag = $("dl-diag"); if (dlDiag) dlDiag.href = U("/api/diagnostics.zip");
@@ -810,5 +897,7 @@
     // First run: greet new users with the setup wizard.
     if (!localStorage.getItem("kv_seen")) { localStorage.setItem("kv_seen", "1"); openWizard(); }
   }).catch(() => {});
+  // Apply the saved screen layout (set once on the box; the kiosk uses it on boot).
+  fetch(U("/api/display")).then((r) => r.json()).then(applyDisplay).catch(() => {});
   connect();
 })();
