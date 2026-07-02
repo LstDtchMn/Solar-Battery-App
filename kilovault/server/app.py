@@ -53,6 +53,11 @@ STATIC_DIR = _resolve_static_dir()
 
 _LOOPBACK = {"127.0.0.1", "localhost", "::1", ""}
 _MAX_BODY = 64 * 1024  # POST bodies are tiny JSON objects
+# Bound request intake so a slow/hostile client on the LAN can't pin a
+# connection open forever (slow-loris) or exhaust memory with endless headers.
+_REQUEST_TIMEOUT = 20.0     # seconds to receive the request line + headers + body
+_MAX_HEADERS = 100          # max header lines
+_MAX_HEADER_BYTES = 32 * 1024  # max total header bytes
 
 
 class DashboardServer:
@@ -103,38 +108,57 @@ class DashboardServer:
             await self._server.serve_forever()
 
     # ------------------------------------------------------------------
+    async def _read_request(self, reader):
+        """Read the request line, headers, and body with bounds. Returns
+        (method, raw_path, headers, body) or a ("__err__", status) tuple."""
+        request_line = await reader.readline()
+        if not request_line:
+            return None
+        parts = request_line.decode("latin1").split()
+        if len(parts) < 2:
+            return ("__err__", 400)
+        method, raw_path = parts[0], parts[1]
+
+        headers = {}
+        total = 0
+        while True:
+            line = await reader.readline()
+            if line in (b"\r\n", b"\n", b""):
+                break
+            total += len(line)
+            if len(headers) >= _MAX_HEADERS or total > _MAX_HEADER_BYTES:
+                return ("__err__", 431)
+            k, _, v = line.decode("latin1").partition(":")
+            headers[k.strip().lower()] = v.strip()
+
+        body = b""
+        if "content-length" in headers:
+            try:
+                n = int(headers["content-length"])
+            except ValueError:
+                n = 0
+            if n > _MAX_BODY:
+                return ("__err__", 413)
+            try:
+                body = await reader.readexactly(n) if n > 0 else b""
+            except asyncio.IncompleteReadError:
+                body = b""
+        return (method, raw_path, headers, body)
+
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
-            request_line = await reader.readline()
-            if not request_line:
-                writer.close()
+            try:
+                result = await asyncio.wait_for(
+                    self._read_request(reader), timeout=_REQUEST_TIMEOUT)
+            except asyncio.TimeoutError:
+                return  # slow/idle client — drop the connection
+            if result is None:
                 return
-            parts = request_line.decode("latin1").split()
-            if len(parts) < 2:
-                await self._send(writer, 400, "text/plain", b"bad request")
-                return
-            method, raw_path = parts[0], parts[1]
-
-            headers = {}
-            while True:
-                line = await reader.readline()
-                if line in (b"\r\n", b"\n", b""):
-                    break
-                k, _, v = line.decode("latin1").partition(":")
-                headers[k.strip().lower()] = v.strip()
-
-            body = b""
-            if "content-length" in headers:
-                try:
-                    n = int(headers["content-length"])
-                except ValueError:
-                    n = 0
-                if n > _MAX_BODY:
-                    return await self._send(writer, 413, "text/plain", b"payload too large")
-                try:
-                    body = await reader.readexactly(n) if n > 0 else b""
-                except asyncio.IncompleteReadError:
-                    body = b""
+            if result[0] == "__err__":
+                msg = {400: b"bad request", 413: b"payload too large",
+                       431: b"headers too large"}.get(result[1], b"error")
+                return await self._send(writer, result[1], "text/plain", msg)
+            method, raw_path, headers, body = result
 
             path, _, query = raw_path.partition("?")
             params = urllib.parse.parse_qs(query)
@@ -212,17 +236,14 @@ class DashboardServer:
             if not addr:
                 return await self._json(writer, {"error": "address required"}, 400)
             days = _num(params, "days", 30, int, 1, 366)
-            return await self._json(writer, {
-                "address": addr,
-                "days": self.manager.storage.daily_summary(addr, days),
-            })
+            rows = await self._run_db(self.manager.storage.daily_summary, addr, days)
+            return await self._json(writer, {"address": addr, "days": rows})
 
         if method == "GET" and path == "/api/events":
             addr = _one(params, "address")
             limit = _num(params, "limit", 200, int, 1, 2000)
-            return await self._json(
-                writer, {"events": self.manager.storage.recent_events(addr, limit)}
-            )
+            evts = await self._run_db(self.manager.storage.recent_events, addr, limit)
+            return await self._json(writer, {"events": evts})
 
         if method == "GET" and path == "/api/diagnostics":
             return await self._json(writer, self.manager.diagnostics())
@@ -284,6 +305,12 @@ class DashboardServer:
         return await self._send(writer, 404, "text/plain", b"not found")
 
     # ------------------------------------------------------------------
+    async def _run_db(self, fn, *args):
+        """Run a (blocking) storage read off the event loop so a big query
+        can't stall live SSE feeds or the collector."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fn(*args))
+
     async def _history(self, writer, params):
         addr = _one(params, "address")
         if not addr:
@@ -291,8 +318,11 @@ class DashboardServer:
         minutes = _num(params, "minutes", 180.0, float, 0.0, 525600.0)
         points = _num(params, "points", 2000, int, 100, 8000)
         since = time.time() - minutes * 60 if minutes > 0 else None
-        rows = self.manager.storage.history(
-            addr, since=since, limit=20000, max_points=points)
+        # Offloaded: the downsample scans up to 20k rows and would otherwise
+        # freeze the event loop (and every SSE feed) for the query's duration.
+        rows = await self._run_db(
+            lambda: self.manager.storage.history(
+                addr, since=since, limit=20000, max_points=points))
         return await self._json(writer, {"address": addr, "rows": rows})
 
     def _preflight(self) -> dict:
@@ -365,15 +395,18 @@ class DashboardServer:
 
     async def _serve_diagnostics_zip(self, writer):
         from ..diagnostics import build_zip
+        out = None
         try:
             loop = asyncio.get_running_loop()
             out = await loop.run_in_executor(None, build_zip, self.manager.cfg)
             data = await loop.run_in_executor(None, Path(out).read_bytes)
-            Path(out).unlink(missing_ok=True)
         except Exception as exc:
             log.exception("diagnostics zip failed")
             return await self._send(writer, 500, "text/plain",
                                     f"diagnostics failed: {exc}".encode())
+        finally:
+            if out:
+                Path(out).unlink(missing_ok=True)
         fname = f"kilovault_diagnostics_{int(time.time())}.zip"
         await self._send(writer, 200, "application/zip", data,
                          extra_headers={"Content-Disposition":
@@ -390,8 +423,10 @@ class DashboardServer:
             self.manager.storage.export_csv(tmp, address=addr or None, since=since)
             return tmp.read_bytes()
 
-        data = await asyncio.get_running_loop().run_in_executor(None, _do_export)
-        tmp.unlink(missing_ok=True)
+        try:
+            data = await asyncio.get_running_loop().run_in_executor(None, _do_export)
+        finally:
+            tmp.unlink(missing_ok=True)  # never leave a temp CSV behind
         fname = _safe_filename(f"kilovault_{addr or 'all'}_{int(time.time())}.csv")
         await self._send(
             writer, 200, "text/csv", data,
@@ -443,7 +478,8 @@ class DashboardServer:
     async def _send(self, writer, status, ctype, body: bytes, extra_headers=None):
         reason = {200: "OK", 204: "No Content", 400: "Bad Request",
                   401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
-                  413: "Payload Too Large", 500: "Internal Server Error"}.get(status, "OK")
+                  413: "Payload Too Large", 431: "Request Header Fields Too Large",
+                  500: "Internal Server Error"}.get(status, "OK")
         head = [
             f"HTTP/1.1 {status} {reason}",
             f"Content-Type: {_hsan(ctype)}",

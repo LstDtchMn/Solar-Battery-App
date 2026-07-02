@@ -55,6 +55,9 @@ class Manager:
         self._collector_task: Optional[asyncio.Task] = None
         self._housekeeping_task: Optional[asyncio.Task] = None
         self._watchdog_task: Optional[asyncio.Task] = None
+        # Serialise transport hot-swaps so two concurrent wizard submits can't
+        # leave an orphaned transport/collector running.
+        self._transport_lock = asyncio.Lock()
         # Per-battery alarm-threshold overrides {address: {field: value}}.
         self._thresholds: Dict[str, dict] = self.storage.get_all_thresholds()
         self.transport = build_transport(
@@ -89,53 +92,61 @@ class Manager:
         return st
 
     async def _on_sample(self, sample: BatterySample) -> None:
-        st = self._state_for(sample.address)
-        # A user-set friendly name always wins over the advertised name.
-        if st.name and st.name != sample.address:
-            sample.name = st.name
-        st.update(sample)
-        # Reconcile the sample to the user's capacity override so remaining-Ah,
-        # the bank totals, the UI and the stored/exported rows all agree.
-        if st.capacity_override is not None:
-            sample.total_capacity = st.capacity_override
-
-        # A sample proves the battery is alive: refresh connection liveness here
-        # (centrally) so the stale watchdog works for every transport, and clears
-        # a prior "stale" mark once data resumes.
-        if st.connection is not None:
-            st.connection.connected = True
-            st.connection.last_seen = sample.timestamp or time.time()
-            if st.connection.error and st.connection.error.startswith("no data"):
-                st.connection.error = ""
-
-        # Alarm evaluation touches storage (event log); never let a transient
-        # error there escape and kill the collector.
+        # This runs for every incoming frame on the collector task. Any escaping
+        # exception would kill that task and silently take the whole monitor
+        # offline (the BLE transport guards its callback, but the simulator and
+        # serial bridge await this directly), so the body is fully guarded.
         try:
-            active = self.alarms.evaluate(st, self._effective_alarm_cfg(sample.address))
-        except Exception:
-            log.exception("alarm evaluation failed for %s", sample.address)
-            active = []
-        self._active_alarms[sample.address] = active
-        self._update_hardware()
+            st = self._state_for(sample.address)
+            # A user-set friendly name always wins over the advertised name.
+            if st.name and st.name != sample.address:
+                sample.name = st.name
+            st.update(sample)
+            # Reconcile the sample to the user's capacity override so remaining-Ah,
+            # the bank totals, the UI and the stored/exported rows all agree.
+            if st.capacity_override is not None:
+                sample.total_capacity = st.capacity_override
 
-        now = sample.timestamp or time.time()
-        if now - self._last_log.get(sample.address, 0) >= self.cfg.log_interval:
+            # A sample proves the battery is alive: refresh connection liveness
+            # here (centrally) so the stale watchdog works for every transport,
+            # and clears a prior "stale" mark once data resumes.
+            if st.connection is not None:
+                st.connection.connected = True
+                st.connection.last_seen = sample.timestamp or time.time()
+                if st.connection.error and st.connection.error.startswith("no data"):
+                    st.connection.error = ""
+
+            # Alarm evaluation touches storage (event log); never let a transient
+            # error there escape and kill the collector.
             try:
-                self.storage.insert_sample(sample)
-                # Persist energy counters so they survive a restart.
-                self.storage.save_counters(
-                    sample.address, st.wh_charged, st.wh_discharged,
-                    st.ah_charged, st.ah_discharged, st.session_start)
+                active = self.alarms.evaluate(st, self._effective_alarm_cfg(sample.address))
             except Exception:
-                pass
-            self._last_log[sample.address] = now
+                log.exception("alarm evaluation failed for %s", sample.address)
+                active = []
+            self._active_alarms[sample.address] = active
+            self._update_hardware()
 
-        await self._publish({
-            "type": "sample",
-            "address": sample.address,
-            "battery": st.to_dict(),
-            "alarms": [a.__dict__ for a in active],
-        })
+            now = sample.timestamp or time.time()
+            if now - self._last_log.get(sample.address, 0) >= self.cfg.log_interval:
+                try:
+                    self.storage.insert_sample(sample)
+                    # Persist energy counters so they survive a restart.
+                    self.storage.save_counters(
+                        sample.address, st.wh_charged, st.wh_discharged,
+                        st.ah_charged, st.ah_discharged, st.session_start)
+                except Exception:
+                    pass
+                self._last_log[sample.address] = now
+
+            await self._publish({
+                "type": "sample",
+                "address": sample.address,
+                "battery": st.to_dict(),
+                "alarms": [a.__dict__ for a in active],
+            })
+        except Exception:
+            log.exception("error handling sample from %s",
+                          getattr(sample, "address", "?"))
 
     async def _on_state(self, conn: ConnectionState) -> None:
         st = self._state_for(conn.address)
@@ -146,6 +157,11 @@ class Manager:
         if not conn.connected:
             st.mark_disconnected()
         st.connection = conn
+        # Seed liveness at connect so the watchdog can detect a battery that
+        # connects but never delivers a notification (last_seen would stay None
+        # and the stale check would never fire).
+        if conn.connected and conn.last_seen is None:
+            conn.last_seen = time.time()
         # Log connection transitions — the most useful thing during support.
         if conn.connected and not was_connected:
             log.info("Connected to %s (%s)  rssi=%s fw=%s",
@@ -397,21 +413,24 @@ class Manager:
 
     async def set_transport(self, tcfg: TransportConfig) -> None:
         """Hot-swap the data source (used by the setup wizard)."""
-        log.info("Switching transport %s -> %s", self.cfg.transport.type, tcfg.type)
-        try:
-            await self.transport.stop()
-        except Exception:
-            log.debug("error stopping old transport", exc_info=True)
-        if self._collector_task:
-            self._collector_task.cancel()
+        # Serialise so two near-simultaneous switches can't each build a new
+        # transport and leave the other's transport/collector orphaned.
+        async with self._transport_lock:
+            log.info("Switching transport %s -> %s", self.cfg.transport.type, tcfg.type)
             try:
-                await self._collector_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        self.cfg.transport = tcfg
-        self.transport = build_transport(tcfg, self._on_sample, self._on_state)
-        self._collector_task = asyncio.ensure_future(self._run_transport())
-        await self._publish({"type": "transport", "transport": tcfg.type})
+                await self.transport.stop()
+            except Exception:
+                log.debug("error stopping old transport", exc_info=True)
+            if self._collector_task:
+                self._collector_task.cancel()
+                try:
+                    await self._collector_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            self.cfg.transport = tcfg
+            self.transport = build_transport(tcfg, self._on_sample, self._on_state)
+            self._collector_task = asyncio.ensure_future(self._run_transport())
+            await self._publish({"type": "transport", "transport": tcfg.type})
 
     async def run(self) -> None:
         """Start the collector and block until it finishes (for `monitor`)."""

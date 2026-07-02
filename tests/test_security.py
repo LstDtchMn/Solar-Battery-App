@@ -71,6 +71,51 @@ class _FakeWriter:
         return None
 
 
+class _FakeReader:
+    """Feeds canned lines to DashboardServer._read_request (no real socket)."""
+
+    def __init__(self, lines):
+        self._lines = list(lines)
+
+    async def readline(self):
+        return self._lines.pop(0) if self._lines else b""
+
+    async def readexactly(self, n):
+        return b""
+
+
+def test_read_request_caps_header_count(tmp_path):
+    # A flood of headers must be rejected (431), not buffered without bound.
+    s = _server(tmp_path, "127.0.0.1")
+    try:
+        lines = ([b"GET /api/snapshot HTTP/1.1\r\n"]
+                 + [f"X-Pad-{i}: y\r\n".encode() for i in range(200)]
+                 + [b"\r\n"])
+        result = asyncio.run(s._read_request(_FakeReader(lines)))
+        assert result[0] == "__err__" and result[1] == 431
+    finally:
+        s.manager.storage.close()
+
+
+def test_on_sample_never_kills_collector(tmp_path):
+    # An unexpected error while handling a frame must be swallowed so the
+    # collector task (and the whole monitor) stays alive.
+    import types
+
+    cfg = Config()
+    cfg.db_path = tmp_path / "h.db"
+    cfg.transport.type = "simulator"
+    m = Manager(cfg)
+    try:
+        def boom(_addr):
+            raise RuntimeError("boom")
+        m._state_for = boom
+        # Must not raise despite _state_for blowing up.
+        asyncio.run(m._on_sample(types.SimpleNamespace(address="AA", timestamp=0)))
+    finally:
+        m.storage.close()
+
+
 def test_header_values_cannot_inject_crlf():
     # A CR/LF in a header value must not create a new header line.
     assert _hsan("kilovault_abc\r\nX-Injected: PWNED_1.csv") == \
