@@ -2,6 +2,24 @@
 
 All notable changes to the KiloVault HLX+ Monitor.
 
+## 1.3.0
+
+Standalone cabin operation with **no Wi‑Fi**: the Pi becomes its own network and
+the touchscreen is customizable.
+
+### Added
+- **Pi Wi‑Fi hotspot** (`deploy/setup-hotspot.sh`): the Pi broadcasts its own
+  network (NetworkManager AP + shared mode — DHCP/NAT built in) so a phone
+  connects directly with no router or internet. Writes `host` + `advertised_host`
+  into the config so the phone URL/QR are correct; starts on every boot.
+  `install-pi.sh` gains `--hotspot` / `--no-hotspot` and a prompt.
+- **Customizable kiosk screen** (📺 Screen button): layout presets — bank
+  overview, giant charge %, or single-battery focus — plus focus battery, text
+  size (0.8–2.5×), and a light theme. Saved on the box and applied on boot;
+  changes broadcast to connected phones live.
+- **`web.advertised_host`** config so the phone URL + QR are stable behind the
+  hotspot (no address to auto-detect); a server-side key/value settings store.
+
 ## 1.2.0
 
 Cabin-box release: a standalone Raspberry Pi touchscreen deployment, phone

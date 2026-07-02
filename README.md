@@ -114,16 +114,23 @@ with just a USB cable back to the PC. See [`docs/HARDWARE.md`](docs/HARDWARE.md)
 ## Cabin box — a standalone Raspberry Pi with a touchscreen
 
 Want an always-on appliance by the batteries with a small touchscreen and phone
-access over the cabin Wi-Fi? Flash a Pi, run one installer, and it boots straight
-into a full-screen dashboard and reconnects on its own — no internet, ever.
+access? Flash a Pi, run one installer, and it boots straight into a full-screen
+dashboard and reconnects on its own — no internet, ever.
 
 ```bash
 git clone https://github.com/LstDtchMn/Solar-Battery-App.git ~/Solar-Battery-App
 cd ~/Solar-Battery-App && sudo bash deploy/install-pi.sh
 ```
 
-Full walkthrough (SD imaging, kiosk, iPhone "Add to Home Screen", watchdog,
-siren alerts, SD-card longevity): [**`docs/CABIN.md`**](docs/CABIN.md).
+**No Wi-Fi in the cabin?** The Pi can broadcast **its own network** so your phone
+connects directly (no router) — `deploy/setup-hotspot.sh`. The touchscreen is
+**customizable** (📺 Screen: bank overview / giant charge % / single-battery,
+plus text size and light theme), and a 📱 QR code opens the dashboard on your
+iPhone without typing.
+
+Full walkthrough (SD imaging, hotspot, kiosk, screen layouts, iPhone "Add to
+Home Screen", watchdog, siren alerts, SD-card longevity):
+[**`docs/CABIN.md`**](docs/CABIN.md).
 
 ## Commands
 

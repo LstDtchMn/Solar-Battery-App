@@ -2,8 +2,9 @@
 
 This guide turns a **Raspberry Pi** into a always-on, low-power appliance that
 sits by your batteries, shows a full-screen dashboard on a small touchscreen,
-and lets you check the pack from your **iPhone** over the cabin Wi‑Fi — all with
-**no internet**.
+and lets you check the pack from your **iPhone** — all with **no internet**. No
+Wi‑Fi in the cabin? The Pi can broadcast **its own network** for your phone to
+join ([§6](#6-cabin-with-no-wifi-make-the-pi-its-own-network)).
 
 You do this once. After that the box just runs: plug it in, it boots straight
 into the dashboard, and reconnects to the batteries on its own.
@@ -34,7 +35,7 @@ into the dashboard, and reconnects to the batteries on its own.
 
 If your batteries are more than ~10 m / a wall away from where the Pi sits,
 Bluetooth may be flaky. In that case put an **ESP32 BLE bridge** next to the
-batteries and wire/USB it to the Pi (see [§12](#12-esp32-bridge-if-bluetooth-wont-reach)).
+batteries and wire/USB it to the Pi (see [§13](#13-esp32-bridge-if-bluetooth-wont-reach)).
 
 ---
 
@@ -112,7 +113,7 @@ journalctl -u kilovault -f      # live log — Ctrl+C to stop watching
 ```
 
 Within a minute or two you should see `Connected to …` lines. If not, jump to
-[Troubleshooting](#13-troubleshooting).
+[Troubleshooting](#14-troubleshooting).
 
 ---
 
@@ -154,9 +155,48 @@ For the official DSI touchscreen on older images, add `display_lcd_rotate=2`
 display on current Pi OS; if it doesn’t, use the Screen Configuration tool,
 which rotates both together.
 
+### Customizing what the screen shows
+
+Tap the **📺 Screen** button in the top bar to change the layout without any
+config files:
+
+- **Bank overview** — every battery at once (the default).
+- **Giant charge %** — one huge state-of-charge number, readable across the room.
+- **Single battery** — one battery, enlarged (pick which under *Focus battery*).
+
+You can also set the **text size** (great for a tiny screen) and a **light theme**
+for a bright cabin. The choice is saved on the box, so the kiosk comes back up
+the same way after a power cut — and any phone you have connected updates live.
+
 ---
 
-## 6. View it on your iPhone
+## 6. Cabin with no Wi‑Fi? Make the Pi its own network
+
+An off‑grid cabin usually has no router. The Pi can broadcast **its own Wi‑Fi**
+so your phone connects straight to it — no internet, no router, nothing else.
+
+During `install-pi.sh` just answer **yes** to the hotspot question, or run it
+any time:
+
+```bash
+sudo bash ~/Solar-Battery-App/deploy/setup-hotspot.sh "KiloVault-Cabin" "your-password"
+```
+
+It prints the network name and password. On your phone, join that Wi‑Fi, then
+open the dashboard (or use the **📱 Phone** QR). The hotspot starts on every boot.
+
+> One‑time note: Wi‑Fi access‑point mode needs your **country** set. If the
+> script warns about it, run `sudo raspi-config` → *Localisation* → *WLAN
+> Country*, then re‑run the hotspot script.
+>
+> The Pi's built‑in Wi‑Fi can either **join** a network or **be** a hotspot, not
+> both. In a no‑Wi‑Fi cabin that's exactly what you want. (If you also have a 4G
+> USB modem or HAT, it provides data separately and leaves Wi‑Fi free for the
+> hotspot.)
+
+---
+
+## 7. View it on your iPhone
 
 **Easiest: scan the QR code.** On the touchscreen (or any browser already
 showing the dashboard) tap the **📱 Phone** button in the top bar. It shows a QR
@@ -195,7 +235,7 @@ hostname -I          # the Pi's IP address
 
 ---
 
-## 7. Make the SD card last
+## 8. Make the SD card last
 
 An SD card that’s written to constantly will eventually wear out. The cabin
 config already softens this (`log_interval = 30`, so it saves a row every 30 s
@@ -210,7 +250,7 @@ an SD card — far more durable. That’s optional and beyond this guide.
 
 ---
 
-## 8. Auto‑reboot if it ever freezes (hardware watchdog)
+## 9. Auto‑reboot if it ever freezes (hardware watchdog)
 
 The Pi has a built‑in watchdog that reboots it if the whole system locks up
 (rare, but nice insurance for an unattended cabin). Enable it:
@@ -228,7 +268,7 @@ where the entire OS hangs.
 
 ---
 
-## 9. Power: it just comes back
+## 10. Power: it just comes back
 
 There’s nothing to do here — it’s the point of the appliance. On power loss and
 restore (a common thing at an off‑grid cabin), the Pi boots, the service starts,
@@ -240,7 +280,7 @@ use a bargain car‑USB adapter; undervoltage is the top cause of SD corruption.
 
 ---
 
-## 10. Optional: siren or light on a critical alarm
+## 11. Optional: siren or light on a critical alarm
 
 The box can shout when something’s actually wrong (pack too cold to charge, cell
 imbalance, very low state of charge). Edit `~/kilovault/config.toml`, in the
@@ -265,7 +305,7 @@ it never writes to the pack; the relay just switches your own siren/light.
 
 ---
 
-## 11. Updating later
+## 12. Updating later
 
 When there’s a new version, and you have internet again, one command does it all
 (keeps your config + history, pulls the code, reinstalls, restarts the service):
@@ -276,7 +316,7 @@ sudo bash ~/Solar-Battery-App/deploy/update.sh
 
 ---
 
-## 12. ESP32 bridge (if Bluetooth won’t reach)
+## 13. ESP32 bridge (if Bluetooth won’t reach)
 
 If the Pi is too far from the bank for reliable Bluetooth, flash the included
 **ESP32 firmware** (`firmware/esp32_bridge/`), place the ESP32 next to the
@@ -293,7 +333,7 @@ is identical.
 
 ---
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 **The dashboard won’t load on my phone.**
 - Phone and Pi on the *same* Wi‑Fi? (Not cellular, not a guest network.)
