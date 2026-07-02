@@ -6,9 +6,23 @@
 # kiosk. Safe to re-run: it never overwrites an existing config.toml.
 #
 #   curl -O .../install-pi.sh   # or clone the repo
-#   sudo bash install-pi.sh
+#   sudo bash install-pi.sh                 # interactive
+#   sudo bash install-pi.sh --kiosk         # unattended, set up the kiosk too
+#   sudo bash install-pi.sh --no-kiosk      # unattended, service only
 #
 set -euo pipefail
+
+# --- Options (support unattended installs / re-runs) --------------------------
+KIOSK_CHOICE=""          # "y" / "n" forces non-interactive; "" prompts
+for arg in "$@"; do
+  case "$arg" in
+    --kiosk)    KIOSK_CHOICE="y" ;;
+    --no-kiosk) KIOSK_CHOICE="n" ;;
+    -h|--help)
+      grep '^#' "$0" | sed 's/^# \{0,1\}//; 1d'; exit 0 ;;
+    *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
+  esac
+done
 
 # --- Resolve who we're installing for ----------------------------------------
 # When run under sudo, install for the login user (usually "pi"), not root.
@@ -90,8 +104,12 @@ systemctl enable kilovault.service
 systemctl restart kilovault.service
 
 # --- Optional: touchscreen kiosk ---------------------------------------------
-echo
-read -r -p "Set up the full-screen touchscreen kiosk on this Pi? [y/N] " KIOSK || KIOSK="n"
+if [ -n "$KIOSK_CHOICE" ]; then
+  KIOSK="$KIOSK_CHOICE"
+else
+  echo
+  read -r -p "Set up the full-screen touchscreen kiosk on this Pi? [y/N] " KIOSK || KIOSK="n"
+fi
 if [ "${KIOSK,,}" = "y" ]; then
   echo "--> Installing Chromium + kiosk autostart…"
   apt-get install -y --no-install-recommends chromium-browser unclutter x11-xserver-utils \
@@ -103,6 +121,11 @@ if [ "${KIOSK,,}" = "y" ]; then
   sed "s#^Exec=.*#Exec=env KV_CONFIG=$CONFIG $SCRIPT_DIR/kiosk.sh#" \
     "$SCRIPT_DIR/kilovault-kiosk.desktop" > "$AUTOSTART/kilovault-kiosk.desktop"
   chown "$KV_USER:$KV_USER" "$AUTOSTART/kilovault-kiosk.desktop"
+  # Stop the screen from blanking. raspi-config's switch is the one reliable
+  # way that works under both X11 and Wayland (labwc/wayfire) on Pi OS.
+  if command -v raspi-config >/dev/null 2>&1; then
+    raspi-config nonint do_blanking 1 || true
+  fi
   echo "    Kiosk will start on the next desktop login. Reboot to try it."
 fi
 

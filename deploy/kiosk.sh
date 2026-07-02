@@ -56,7 +56,10 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 
-# --- Keep the screen awake (best-effort; works on X11, harmless elsewhere) -----
+# --- Keep the screen awake ----------------------------------------------------
+# X11: xset handles blanking + DPMS. Wayland (labwc/wayfire on Pi OS Bookworm)
+# ignores xset — there the installer disables blanking via `raspi-config nonint
+# do_blanking 1`, which is the reliable cross-compositor switch.
 if [ -n "${DISPLAY:-}" ] && command -v xset >/dev/null 2>&1; then
   xset s off || true
   xset -dpms || true
@@ -81,18 +84,33 @@ fi
 PROFILE="${HOME}/.kilovault-kiosk"
 mkdir -p "$PROFILE"
 
+launch_browser() {
+  # Wipe the "exited cleanly" flags so a prior crash never shows a restore bar.
+  rm -f "$PROFILE/Default/Preferences.lock" 2>/dev/null || true
+  sed -i 's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"[^"]*"/"exit_type":"Normal"/' \
+    "$PROFILE/Default/Preferences" 2>/dev/null || true
+  "$BROWSER" \
+    --kiosk "$URL" \
+    --user-data-dir="$PROFILE" \
+    --start-fullscreen \
+    --noerrdialogs \
+    --disable-infobars \
+    --disable-session-crashed-bubble \
+    --disable-features=Translate,TranslateUI \
+    --check-for-update-interval=31536000 \
+    --overscroll-history-navigation=0 \
+    --autoplay-policy=no-user-gesture-required \
+    --touch-events=enabled \
+    --password-store=basic \
+    --disable-pinch
+}
+
+# Crash recovery: if Chromium ever exits (crash, GPU reset, OOM), relaunch it so
+# the cabin screen never goes dark and stays dark. Ctrl+C stops the loop cleanly.
+trap 'echo "kiosk: stopping."; exit 0' INT TERM
 echo "kiosk: launching ${BROWSER} → ${URL}"
-exec "$BROWSER" \
-  --kiosk "$URL" \
-  --user-data-dir="$PROFILE" \
-  --start-fullscreen \
-  --noerrdialogs \
-  --disable-infobars \
-  --disable-session-crashed-bubble \
-  --disable-features=Translate,TranslateUI \
-  --check-for-update-interval=31536000 \
-  --overscroll-history-navigation=0 \
-  --autoplay-policy=no-user-gesture-required \
-  --touch-events=enabled \
-  --password-store=basic \
-  --disable-pinch
+while true; do
+  launch_browser || true
+  echo "kiosk: browser exited; relaunching in 3s…"
+  sleep 3
+done

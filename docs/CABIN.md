@@ -92,6 +92,10 @@ When it finishes it prints two links — one for this Pi, one for your phone.
 
 > Re‑running the installer is safe. It never overwrites your `config.toml`, so
 > your token and settings stick.
+>
+> **Scripting it?** The installer also takes flags so it can run unattended:
+> `sudo bash deploy/install-pi.sh --kiosk` (service + kiosk, no prompts) or
+> `--no-kiosk` (service only).
 
 ---
 
@@ -126,6 +130,29 @@ To turn a normal Pi desktop into a kiosk later, or to test it by hand:
 ```
 
 Press **Alt+F4** (with a keyboard) to leave the kiosk during setup.
+
+The kiosk **restarts the browser automatically** if it ever crashes, so the
+screen never goes dark and stays dark, and the installer turns off screen
+blanking so the display stays on.
+
+### Rotating the screen
+
+If your touchscreen is mounted sideways or upside down, rotate the whole
+display. On **Raspberry Pi OS Bookworm** (the current version), the easy way is:
+
+- Desktop menu → **Preferences → Screen Configuration**, right‑click the screen
+  → **Rotation**, pick 90/180/270°, then **apply** and save.
+
+Or from a terminal, one‑time test (Wayland):
+
+```bash
+wlr-randr --output HDMI-A-1 --transform 90     # 90, 180, 270, or normal
+```
+
+For the official DSI touchscreen on older images, add `display_lcd_rotate=2`
+(180°) to `/boot/firmware/config.txt` and reboot. Touch input rotates with the
+display on current Pi OS; if it doesn’t, use the Screen Configuration tool,
+which rotates both together.
 
 ---
 
@@ -233,13 +260,11 @@ it never writes to the pack; the relay just switches your own siren/light.
 
 ## 11. Updating later
 
-When there’s a new version, and you have internet again:
+When there’s a new version, and you have internet again, one command does it all
+(keeps your config + history, pulls the code, reinstalls, restarts the service):
 
 ```bash
-cd ~/Solar-Battery-App
-git pull
-sudo bash deploy/install-pi.sh      # keeps your config; updates the code
-sudo systemctl restart kilovault
+sudo bash ~/Solar-Battery-App/deploy/update.sh
 ```
 
 ---
@@ -305,7 +330,10 @@ is identical.
   boot and restart on failure. See [`deploy/kilovault.service`](../deploy/kilovault.service).
 - **Kiosk autostart** — a `.desktop` file in `~/.config/autostart/` that runs
   [`deploy/kiosk.sh`](../deploy/kiosk.sh), which reads the port + token from your
-  config, waits for the server, and opens Chromium full‑screen.
+  config, waits for the server, opens Chromium full‑screen, and relaunches it if
+  it ever crashes.
+- **`deploy/update.sh`** — pulls the latest code, reinstalls, and restarts the
+  service without touching your config or history.
 
 Everything runs on the Python **standard library** plus `bleak` for Bluetooth.
 No internet, no cloud, no accounts.
