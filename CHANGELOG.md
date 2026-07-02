@@ -16,6 +16,9 @@ Configure everything from the dashboard, and a friendlier hotspot.
   catch-all, wired into `deploy/setup-hotspot.sh` (skip with `KV_NO_CAPTIVE=1`).
 - **Fleet display preset**: a compact grid of all batteries for large banks,
   alongside bank / giant-SoC / single-battery.
+- **One-line Pi installer** (`deploy/bootstrap.sh`): downloads the monitor and
+  runs the full cabin-box setup in a single `curl … | sudo bash` command — the
+  Pi equivalent of the Windows double-click `.exe`.
 
 ## 1.3.0
 

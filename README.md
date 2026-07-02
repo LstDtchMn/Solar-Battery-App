@@ -50,12 +50,25 @@ again.
 | **Works with no internet** | ✅ | ✅ |
 | **No vendor account / cloud** | — | ✅ |
 
-## Easiest start — the double-click app (Windows)
+## Get it — one download per platform
 
-Download `KiloVaultMonitor.exe` (Releases, or build it — see
-[`docs/USAGE.md`](docs/USAGE.md#packaging)), **double-click it**, and follow the
-setup wizard. No Python, no command line. Full walkthrough in the
-[**Quick Start**](QUICKSTART.md).
+Same app everywhere; just pick the package for your machine:
+
+| Platform | Get it | Then |
+|---|---|---|
+| **Windows PC** | `KiloVaultMonitor.exe` from [Releases](../../releases) | Double-click it — no Python, no command line |
+| **Raspberry Pi cabin box** | one command (below) | Boots into a touchscreen + its own Wi-Fi |
+
+**Windows:** download `KiloVaultMonitor.exe`, **double-click**, follow the setup
+wizard. Full walkthrough in the [**Quick Start**](QUICKSTART.md). (Or build the
+`.exe` yourself — see [`docs/USAGE.md`](docs/USAGE.md#packaging).)
+
+**Raspberry Pi:** one line installs everything (see the
+[Cabin box](#cabin-box--a-standalone-raspberry-pi-with-a-touchscreen) section):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LstDtchMn/Solar-Battery-App/main/deploy/bootstrap.sh | sudo bash
+```
 
 ## Quick start — try it with no hardware
 
@@ -114,13 +127,17 @@ with just a USB cable back to the PC. See [`docs/HARDWARE.md`](docs/HARDWARE.md)
 ## Cabin box — a standalone Raspberry Pi with a touchscreen
 
 Want an always-on appliance by the batteries with a small touchscreen and phone
-access? Flash a Pi, run one installer, and it boots straight into a full-screen
-dashboard and reconnects on its own — no internet, ever.
+access? One command on a Pi and it boots straight into a full-screen dashboard
+and reconnects on its own — no internet, ever.
 
 ```bash
-git clone https://github.com/LstDtchMn/Solar-Battery-App.git ~/Solar-Battery-App
-cd ~/Solar-Battery-App && sudo bash deploy/install-pi.sh
+curl -fsSL https://raw.githubusercontent.com/LstDtchMn/Solar-Battery-App/main/deploy/bootstrap.sh | sudo bash
 ```
+
+That's the Pi equivalent of the Windows double-click `.exe`: it downloads the
+monitor and runs the whole setup. Add `-s -- --kiosk --hotspot` to do the
+touchscreen kiosk and the Pi's own Wi-Fi network unattended. (Prefer to do it by
+hand? `git clone` the repo and run `sudo bash deploy/install-pi.sh`.)
 
 **No Wi-Fi in the cabin?** The Pi can broadcast **its own network** so your phone
 connects directly (no router) — `deploy/setup-hotspot.sh`. Joining it **auto-opens

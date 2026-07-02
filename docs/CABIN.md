@@ -67,9 +67,19 @@ You need a terminal on the Pi. Two ways:
   `ssh pi@cabin.local` (use the password you set).
 - **Directly on the Pi:** plug in a keyboard, open the **Terminal** app.
 
-Then copy‑paste these lines (they need the internet **only for this one‑time
-install** — do it at home or wherever you have a connection; the box never needs
-internet again afterward):
+Then copy‑paste this **one line** (it needs the internet **only for this
+one‑time install** — do it at home or wherever you have a connection; the box
+never needs internet again afterward):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LstDtchMn/Solar-Battery-App/main/deploy/bootstrap.sh | sudo bash
+```
+
+That downloads the monitor and runs the installer — the Pi equivalent of
+double‑clicking the Windows app. To do the kiosk and Wi‑Fi hotspot without any
+prompts, add the flags: `… | sudo bash -s -- --kiosk --hotspot`.
+
+<details><summary>Prefer to do it by hand?</summary>
 
 ```bash
 sudo apt update && sudo apt install -y git
@@ -77,6 +87,7 @@ git clone https://github.com/LstDtchMn/Solar-Battery-App.git ~/Solar-Battery-App
 cd ~/Solar-Battery-App
 sudo bash deploy/install-pi.sh
 ```
+</details>
 
 The installer will:
 
