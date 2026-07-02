@@ -16,6 +16,10 @@ type = "ble"                       # the Pi's built-in Bluetooth
 host = "0.0.0.0"                    # reachable from phones on the cabin Wi-Fi
 port = 8765
 token = "CHANGE-ME-cabin"          # required over the LAN; used by phone + kiosk
+# When the Pi is its own Wi-Fi hotspot (deploy/setup-hotspot.sh), set this to
+# the hotspot address so the phone link + QR code are correct. That script
+# fills it in for you; 10.42.0.1 is NetworkManager's default AP address.
+# advertised_host = "10.42.0.1"
 
 [alarms]
 enabled = true

@@ -9,15 +9,19 @@
 #   sudo bash install-pi.sh                 # interactive
 #   sudo bash install-pi.sh --kiosk         # unattended, set up the kiosk too
 #   sudo bash install-pi.sh --no-kiosk      # unattended, service only
+#   sudo bash install-pi.sh --kiosk --hotspot   # kiosk + Pi's own Wi-Fi network
 #
 set -euo pipefail
 
 # --- Options (support unattended installs / re-runs) --------------------------
 KIOSK_CHOICE=""          # "y" / "n" forces non-interactive; "" prompts
+HOTSPOT_CHOICE=""        # "y" / "n" forces non-interactive; "" prompts
 for arg in "$@"; do
   case "$arg" in
-    --kiosk)    KIOSK_CHOICE="y" ;;
-    --no-kiosk) KIOSK_CHOICE="n" ;;
+    --kiosk)      KIOSK_CHOICE="y" ;;
+    --no-kiosk)   KIOSK_CHOICE="n" ;;
+    --hotspot)    HOTSPOT_CHOICE="y" ;;
+    --no-hotspot) HOTSPOT_CHOICE="n" ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//; 1d'; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
@@ -127,6 +131,21 @@ if [ "${KIOSK,,}" = "y" ]; then
     raspi-config nonint do_blanking 1 || true
   fi
   echo "    Kiosk will start on the next desktop login. Reboot to try it."
+fi
+
+# --- Optional: Wi-Fi hotspot (cabin with no router) --------------------------
+if [ -n "$HOTSPOT_CHOICE" ]; then
+  HOTSPOT="$HOTSPOT_CHOICE"
+else
+  echo
+  echo "No Wi-Fi in the cabin? This Pi can broadcast its own network so a phone"
+  echo "can connect directly (no router, no internet)."
+  read -r -p "Set up the Pi as a Wi-Fi hotspot now? [y/N] " HOTSPOT || HOTSPOT="n"
+fi
+if [ "${HOTSPOT,,}" = "y" ]; then
+  chmod +x "$SCRIPT_DIR/setup-hotspot.sh"
+  KV_CONFIG="$CONFIG" bash "$SCRIPT_DIR/setup-hotspot.sh" || \
+    echo "!! Hotspot setup did not complete; run deploy/setup-hotspot.sh manually."
 fi
 
 # --- Done: print the URLs -----------------------------------------------------
