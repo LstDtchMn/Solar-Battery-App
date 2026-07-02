@@ -392,7 +392,7 @@ class DashboardServer:
 
         data = await asyncio.get_running_loop().run_in_executor(None, _do_export)
         tmp.unlink(missing_ok=True)
-        fname = f"kilovault_{addr or 'all'}_{int(time.time())}.csv"
+        fname = _safe_filename(f"kilovault_{addr or 'all'}_{int(time.time())}.csv")
         await self._send(
             writer, 200, "text/csv", data,
             extra_headers={"Content-Disposition": f'attachment; filename="{fname}"'},
@@ -441,11 +441,12 @@ class DashboardServer:
         await self._send(writer, 200, ctype, path.read_bytes())
 
     async def _send(self, writer, status, ctype, body: bytes, extra_headers=None):
-        reason = {200: "OK", 400: "Bad Request", 404: "Not Found",
-                  500: "Internal Server Error"}.get(status, "OK")
+        reason = {200: "OK", 204: "No Content", 400: "Bad Request",
+                  401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
+                  413: "Payload Too Large", 500: "Internal Server Error"}.get(status, "OK")
         head = [
             f"HTTP/1.1 {status} {reason}",
-            f"Content-Type: {ctype}",
+            f"Content-Type: {_hsan(ctype)}",
             f"Content-Length: {len(body)}",
             # No CORS header: the dashboard is same-origin, so this keeps the
             # browser's same-origin policy protecting the data from other sites.
@@ -453,9 +454,23 @@ class DashboardServer:
             "Connection: close",
         ]
         for k, v in (extra_headers or {}).items():
-            head.append(f"{k}: {v}")
+            # Strip CR/LF so a value derived from user input (e.g. an export
+            # filename built from a query param) can't inject extra headers.
+            head.append(f"{_hsan(k)}: {_hsan(v)}")
         writer.write(("\r\n".join(head) + "\r\n\r\n").encode() + body)
         await writer.drain()
+
+
+def _hsan(value) -> str:
+    """Strip CR/LF from an HTTP header value to prevent response splitting."""
+    return str(value).replace("\r", "").replace("\n", "")
+
+
+def _safe_filename(name: str) -> str:
+    """A filename safe to drop into a Content-Disposition header: keep only
+    friendly characters so nothing from a query param can break out of it."""
+    cleaned = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in str(name))
+    return cleaned[:120] or "download"
 
 
 def _one(params, key, default=""):

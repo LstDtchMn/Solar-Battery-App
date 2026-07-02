@@ -1,10 +1,12 @@
 """Tests for the dashboard's auth / CSRF / token gating (pure, no sockets)."""
 
+import asyncio
+
 import pytest
 
 from kilovault.config import Config
 from kilovault.manager import Manager
-from kilovault.server.app import DashboardServer
+from kilovault.server.app import DashboardServer, _hsan, _safe_filename
 
 
 def _server(tmp_path, host):
@@ -52,6 +54,52 @@ def test_lan_requires_token(tmp_path):
         # the page shell itself is not gated (carries no data)
         assert s._auth_denied("GET", "/", {}, {}) is None
         assert s._auth_denied("GET", "/static/app.js", {}, {}) is None
+    finally:
+        s.manager.storage.close()
+
+
+class _FakeWriter:
+    """Captures bytes written by DashboardServer._send (no real socket)."""
+
+    def __init__(self):
+        self.buf = bytearray()
+
+    def write(self, data):
+        self.buf.extend(data)
+
+    async def drain(self):
+        return None
+
+
+def test_header_values_cannot_inject_crlf():
+    # A CR/LF in a header value must not create a new header line.
+    assert _hsan("kilovault_abc\r\nX-Injected: PWNED_1.csv") == \
+        "kilovault_abcX-Injected: PWNED_1.csv"
+    assert "\r" not in _hsan("a\rb") and "\n" not in _hsan("a\nb")
+
+
+def test_safe_filename_strips_dangerous_chars():
+    # The address query param flows into a Content-Disposition filename; make
+    # sure a crafted value can't smuggle CRLF or quotes into the header.
+    dirty = "all_\r\nSet-Cookie: x=1_\"attack\"_123.csv"
+    clean = _safe_filename(dirty)
+    assert "\r" not in clean and "\n" not in clean and '"' not in clean
+    assert len(clean) <= 120
+
+
+def test_send_neutralizes_injected_content_disposition(tmp_path):
+    # End-to-end: a malicious filename passed to _send is emitted on a single
+    # header line — no response splitting.
+    s = _server(tmp_path, "127.0.0.1")
+    try:
+        w = _FakeWriter()
+        evil = 'attachment; filename="x\r\nX-Injected: PWNED"'
+        asyncio.run(s._send(w, 200, "text/csv", b"col\n",
+                            extra_headers={"Content-Disposition": evil}))
+        head = bytes(w.buf).split(b"\r\n\r\n", 1)[0].decode("latin1")
+        lines = head.split("\r\n")
+        assert not any(line.strip().lower().startswith("x-injected")
+                       for line in lines), head
     finally:
         s.manager.storage.close()
 
