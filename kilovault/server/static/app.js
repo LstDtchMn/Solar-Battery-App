@@ -886,6 +886,66 @@
   }
   const btnDisplay = $("btn-display"); if (btnDisplay) btnDisplay.addEventListener("click", openDisplay);
 
+  // ---- settings editor (no config.toml) -----------------------------
+  async function openSettings() {
+    let s = {};
+    try { s = await (await fetch(U("/api/settings"))).json(); } catch (_) {}
+    const thr = THRESHOLD_FIELDS.map(([f, label, unit]) =>
+      `<label class="thr-row"><span>${esc(label)} <small>(${esc(unit)})</small></span>
+        <input type="number" step="any" data-f="${f}" value="${s[f] != null ? esc(s[f]) : ""}"></label>`).join("");
+    const alertNote = s.hardware_configured ? ""
+      : " — no siren/relay wired up yet";
+    openModal(`
+      <button class="close-x">×</button>
+      <h2>Settings</h2>
+      <p class="sub">Change how the monitor behaves. Saved on the box — no config
+        file to edit, and it survives a reboot.</p>
+      <h3 class="set-h">Alarm thresholds <small>(when you get warned)</small></h3>
+      <div class="thr-grid">${thr}</div>
+      <h3 class="set-h">Alerts &amp; logging</h3>
+      <div class="disp-form">
+        <label>Sound the siren/relay on${esc(alertNote)}
+          <select id="set-alert">
+            <option value="critical">Critical alarms only</option>
+            <option value="any">Any alarm (incl. warnings)</option>
+            <option value="none">Never</option>
+          </select>
+        </label>
+        <label>Save a history point every <small>(seconds)</small>
+          <input type="number" id="set-loginterval" min="1" step="1">
+        </label>
+        <label>Keep history for <small>(days; 0 = forever)</small>
+          <input type="number" id="set-retention" min="0" step="1">
+        </label>
+      </div>
+      <div class="wiz-actions">
+        <button class="btn btn-ghost" data-close>Cancel</button>
+        <button class="btn" id="set-save">Save</button>
+      </div>`);
+    $("set-alert").value = s.alert_on || "critical";
+    $("set-loginterval").value = s.log_interval != null ? s.log_interval : 10;
+    $("set-retention").value = s.retention_days != null ? s.retention_days : 90;
+    $("set-save").onclick = async () => {
+      const body = {
+        alert_on: $("set-alert").value,
+        log_interval: +$("set-loginterval").value,
+        retention_days: +$("set-retention").value,
+      };
+      modalBox.querySelectorAll("input[data-f]").forEach((inp) => {
+        if (inp.value !== "") body[inp.dataset.f] = +inp.value;
+      });
+      try {
+        const r = await fetch(U("/api/settings"), { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        closeModal();
+      } catch (_) {
+        alert("Could not save settings — check the connection and try again.");
+      }
+    };
+  }
+  const btnSettings = $("btn-settings"); if (btnSettings) btnSettings.addEventListener("click", openSettings);
+
   // Token-aware download links (Diagnostics tab).
   const dlLog = $("dl-log"); if (dlLog) dlLog.href = U("/api/log?kb=256");
   const dlDiag = $("dl-diag"); if (dlDiag) dlDiag.href = U("/api/diagnostics.zip");

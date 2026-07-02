@@ -325,3 +325,8 @@ body.theme-light {
 .disp-form label { display: grid; gap: .3rem; font-size: .9rem; color: var(--muted); }
 .disp-form select, .disp-form input[type=range] { width: 100%; }
 .disp-form b { color: var(--text); }
+
+/* Settings modal section headings */
+.set-h { font-size: .95rem; margin: 1.1rem 0 .5rem; color: var(--text);
+         border-bottom: 1px solid var(--line); padding-bottom: .3rem; }
+.set-h small { color: var(--muted); font-weight: 400; }

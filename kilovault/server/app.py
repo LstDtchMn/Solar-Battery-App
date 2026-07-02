@@ -316,6 +316,13 @@ class DashboardServer:
             except (TypeError, ValueError):
                 return await self._json(writer, {"ok": False, "error": "bad capacity"}, 400)
 
+        if method == "GET" and path == "/api/settings":
+            return await self._json(writer, self.manager.app_settings())
+
+        if method == "POST" and path == "/api/settings":
+            saved = self.manager.set_app_settings(_json_body(body))
+            return await self._json(writer, {"ok": True, "settings": saved})
+
         if method == "GET" and path == "/api/display":
             return await self._json(writer, self._display_settings())
 

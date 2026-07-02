@@ -67,6 +67,11 @@ class Manager:
         # counters persist across restarts.
         for addr, dev in self.storage.get_devices().items():
             self.states[addr] = self._new_state(addr, dev)
+        # Apply any settings the user changed in-app (persisted), on top of
+        # config.toml, so they survive restarts without editing the file.
+        saved = self.storage.get_setting("app_settings", None)
+        if isinstance(saved, dict):
+            self._apply_app_settings(saved)
 
     # ------------------------------------------------------------------
     def _new_state(self, addr: str, dev: dict) -> BatteryState:
@@ -305,6 +310,45 @@ class Manager:
             loop.run_in_executor(self._hw_executor, self.hardware.set_active, want, list(alarms))
         else:  # no event loop (tests / direct call): run inline
             self.hardware.set_active(want, list(alarms))
+
+    # -- app settings (editable in the dashboard, no config.toml) --------
+    def app_settings(self) -> dict:
+        """The subset of settings that are safe to change live from the UI."""
+        a = self.cfg.alarms
+        out = {f: getattr(a, f) for f in THRESHOLD_FIELDS}
+        out["log_interval"] = self.cfg.log_interval
+        out["retention_days"] = self.cfg.retention_days
+        out["alert_on"] = self.cfg.hardware.alert_on
+        out["hardware_configured"] = self.hardware.enabled
+        return out
+
+    def _apply_app_settings(self, data: dict) -> None:
+        """Apply editable settings onto the live config (no persistence).
+        Values are clamped/validated by cfg.validate() afterwards."""
+        a = self.cfg.alarms
+        for f in THRESHOLD_FIELDS:
+            if f in data and data[f] not in (None, ""):
+                try:
+                    setattr(a, f, float(data[f]))
+                except (TypeError, ValueError):
+                    pass
+        for f in ("log_interval", "retention_days"):
+            if f in data and data[f] not in (None, ""):
+                try:
+                    setattr(self.cfg, f, float(data[f]))
+                except (TypeError, ValueError):
+                    pass
+        if data.get("alert_on") in ("critical", "any", "none"):
+            self.cfg.hardware.alert_on = data["alert_on"]
+        self.cfg.validate()  # clamp ranges + fix invariants in place
+
+    def set_app_settings(self, data: dict) -> dict:
+        """Apply + persist editable settings so they survive a restart."""
+        self._apply_app_settings(data)
+        persisted = self.app_settings()
+        persisted.pop("hardware_configured", None)  # derived, don't store
+        self.storage.set_setting("app_settings", persisted)
+        return self.app_settings()
 
     # -- per-battery alarm thresholds -----------------------------------
     def global_thresholds(self) -> dict:
