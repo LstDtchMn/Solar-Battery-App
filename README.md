@@ -41,6 +41,8 @@ again.
 | **State-of-Health estimate** | ❌ | ✅ |
 | **CSV export** | ❌ | ✅ |
 | **Runs headless / on a server, reachable from your phone** | ❌ | ✅ |
+| **Phone access via scannable QR code + installable web app** | ❌ | ✅ (offline QR) |
+| **Standalone Raspberry Pi touchscreen cabin box** | ❌ | ✅ |
 | **Guided setup wizard + connection diagnostics page** | ❌ | ✅ |
 | **In-app tooltips + glossary (plain-language help)** | ❌ | ✅ |
 | **Troubleshooting log + one-click diagnostics bundle** | ❌ | ✅ |
@@ -48,12 +50,25 @@ again.
 | **Works with no internet** | ✅ | ✅ |
 | **No vendor account / cloud** | — | ✅ |
 
-## Easiest start — the double-click app (Windows)
+## Get it — one download per platform
 
-Download `KiloVaultMonitor.exe` (Releases, or build it — see
-[`docs/USAGE.md`](docs/USAGE.md#packaging)), **double-click it**, and follow the
-setup wizard. No Python, no command line. Full walkthrough in the
-[**Quick Start**](QUICKSTART.md).
+Same app everywhere; just pick the package for your machine:
+
+| Platform | Get it | Then |
+|---|---|---|
+| **Windows PC** | `KiloVaultMonitor.exe` from [Releases](../../releases) | Double-click it — no Python, no command line |
+| **Raspberry Pi cabin box** | one command (below) | Boots into a touchscreen + its own Wi-Fi |
+
+**Windows:** download `KiloVaultMonitor.exe`, **double-click**, follow the setup
+wizard. Full walkthrough in the [**Quick Start**](QUICKSTART.md). (Or build the
+`.exe` yourself — see [`docs/USAGE.md`](docs/USAGE.md#packaging).)
+
+**Raspberry Pi:** one line installs everything (see the
+[Cabin box](#cabin-box--a-standalone-raspberry-pi-with-a-touchscreen) section):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LstDtchMn/Solar-Battery-App/main/deploy/bootstrap.sh | sudo bash
+```
 
 ## Quick start — try it with no hardware
 
@@ -108,6 +123,33 @@ python -m kilovault.cli serve --serial COM3      # /dev/ttyUSB0 on Linux
 
 The ESP32 can sit right next to the battery bank (BLE range ~100 m line-of-sight)
 with just a USB cable back to the PC. See [`docs/HARDWARE.md`](docs/HARDWARE.md).
+
+## Cabin box — a standalone Raspberry Pi with a touchscreen
+
+Want an always-on appliance by the batteries with a small touchscreen and phone
+access? One command on a Pi and it boots straight into a full-screen dashboard
+and reconnects on its own — no internet, ever.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LstDtchMn/Solar-Battery-App/main/deploy/bootstrap.sh | sudo bash
+```
+
+That's the Pi equivalent of the Windows double-click `.exe`: it downloads the
+monitor and runs the whole setup. Add `-s -- --kiosk --hotspot` to do the
+touchscreen kiosk and the Pi's own Wi-Fi network unattended. (Prefer to do it by
+hand? `git clone` the repo and run `sudo bash deploy/install-pi.sh`.)
+
+**No Wi-Fi in the cabin?** The Pi can broadcast **its own network** so your phone
+connects directly (no router) — `deploy/setup-hotspot.sh`. Joining it **auto-opens
+the dashboard** (captive portal). The touchscreen is **customizable** (📺 Screen:
+bank / fleet / giant charge % / single-battery, plus text size and light theme),
+alarm thresholds and logging are editable in-app (**⚙ Settings**, no config file),
+and a 📱 QR code opens the dashboard on your iPhone without typing.
+
+Full walkthrough (SD imaging, hotspot, kiosk, screen layouts, iPhone "Add to
+Home Screen", watchdog, siren alerts, SD-card longevity):
+[**`docs/CABIN.md`**](docs/CABIN.md). For a **self-powered outdoor unit** (its own
+solar panel + battery), see the build guide [**`docs/OUTDOOR-SOLAR.md`**](docs/OUTDOOR-SOLAR.md).
 
 ## Commands
 

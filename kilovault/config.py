@@ -86,6 +86,14 @@ class WebConfig:
     port: int = 8765
     # Bind to 0.0.0.0 to reach the dashboard from a phone on the cabin LAN.
     open_browser: bool = False
+    # Shared access token required when bound beyond loopback. Leave blank to
+    # auto-generate a persistent one (stored in the data dir), so a phone's
+    # saved link keeps working across restarts; set a fixed value for a kiosk.
+    token: str = ""
+    # Host/IP to advertise in the phone URL + QR code. Set this to the Pi's
+    # hotspot address (e.g. 10.42.0.1) so the link is stable and correct even
+    # when there's no router to auto-detect an address from. Blank = auto-detect.
+    advertised_host: str = ""
 
 
 @dataclass
@@ -223,6 +231,10 @@ stale_after_seconds = 15.0
 host = "127.0.0.1"         # use "0.0.0.0" to reach it from a phone on the LAN
 port = 8765
 open_browser = false
+# Access token required when host is not loopback (keeps the LAN out). Leave
+# blank to auto-generate a persistent one so a phone's saved link keeps working;
+# set a fixed value if you want to choose it (e.g. for a kiosk).
+# token = ""
 
 [alarms]
 enabled = true

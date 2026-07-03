@@ -219,7 +219,10 @@ async def _monitor(cfg: Config) -> int:
     async def printer():
         while True:
             await asyncio.sleep(2.0)
-            snap = manager.snapshot()
+            try:
+                snap = manager.snapshot()
+            except Exception:
+                continue  # a transient read error must not stop the console
             bank = snap["bank"]
             line = time.strftime("%H:%M:%S")
             if bank.get("online_count"):

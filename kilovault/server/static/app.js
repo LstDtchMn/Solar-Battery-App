@@ -31,10 +31,21 @@
   setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString(); }, 1000);
 
   // ---- SSE ----------------------------------------------------------
+  let es = null;
   function connect() {
-    const es = new EventSource(U("/api/stream"));
+    if (es) { try { es.close(); } catch (_) {} }
+    es = new EventSource(U("/api/stream"));
     es.onopen = () => setConn(true);
-    es.onerror = () => { setConn(false); };
+    es.onerror = () => {
+      setConn(false);
+      // EventSource auto-retries while CONNECTING, but once it reaches CLOSED
+      // (e.g. a non-2xx from the server/proxy) it never retries — reconnect
+      // manually so the dashboard recovers without a page reload.
+      if (es && es.readyState === EventSource.CLOSED) {
+        try { es.close(); } catch (_) {}
+        setTimeout(connect, 3000);
+      }
+    };
     es.onmessage = (e) => {
       let msg;
       try { msg = JSON.parse(e.data); } catch (_) { return; }
@@ -49,6 +60,8 @@
         // local refresh from current batteries for responsiveness.
         renderCards();
         maybeUpdateBank();
+      } else if (msg.type === "display") {
+        applyDisplay(msg.display);  // another client changed the screen layout
       }
     };
   }
@@ -67,7 +80,10 @@
       bankState = s.bank;
       (s.batteries || []).forEach((b) => { batteries[b.address] = b; });
       $("transport-pill").textContent = s.transport;
-      renderBank();
+      // Refresh the cards + selector too — if the SSE stream silently stalls
+      // (proxy buffering, collector hiccup) this poll is the only thing keeping
+      // the per-battery cards from freezing on stale values.
+      renderBank(); renderCards(); populateBatterySelect();
     } catch (_) {}
   }, 5000);
 
@@ -132,12 +148,14 @@
       if (!card) { card = buildCard(bat); grid.appendChild(card); }
       updateCard(card, bat);
     });
+    applyFocus();  // keep the single-battery preset pointed at the right card
   }
 
   function buildCard(bat) {
     const card = document.createElement("div");
     card.className = "card";
     card.id = "card-" + cssId(bat.address);
+    card.dataset.address = bat.address;  // used by the single-battery display preset
     card.innerHTML = `
       <div class="card-head">
         <div class="card-name"><span class="nm"></span><span class="edit" title="Rename">✎</span><span class="cfg" title="Alarm thresholds">⚙</span></div>
@@ -205,7 +223,8 @@
       setV(card, ".temp", fmt(s.temperature, 1) + " °C");
       setV(card, ".cycles", s.cycles);
       const dv = card.querySelector(".delta");
-      dv.textContent = Math.round(s.cell_delta * 1000) + " mV";
+      dv.textContent = Number.isFinite(s.cell_delta)
+        ? Math.round(s.cell_delta * 1000) + " mV" : "—";
       dv.className = "v delta " + (s.cell_delta >= 0.3 ? "neg" : "");
 
       renderCells(card, s);
@@ -225,8 +244,9 @@
     const wrap = card.querySelector(".cellbars");
     const cells = s.cell_voltages || [];
     const lo = s.min_cell, hi = s.max_cell;
+    const dmv = Number.isFinite(s.cell_delta) ? Math.round(s.cell_delta * 1000) : "—";
     card.querySelector(".cellinfo").textContent =
-      `min ${fmt(lo, 3)}V · max ${fmt(hi, 3)}V · Δ ${Math.round(s.cell_delta * 1000)}mV`;
+      `min ${fmt(lo, 3)}V · max ${fmt(hi, 3)}V · Δ ${dmv}mV`;
     // scale bars within the active cell range for visual contrast
     const span = Math.max(0.02, hi - lo);
     wrap.innerHTML = "";
@@ -258,12 +278,18 @@
     const cur = (batteries[address] || {}).name || address;
     const name = prompt("Rename battery", cur);
     if (name == null || !name.trim()) return;
-    await fetch(U("/api/rename"), {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address, name: name.trim() }),
-    });
-    if (batteries[address]) batteries[address].name = name.trim();
-    renderCards(); populateBatterySelect();
+    try {
+      const r = await fetch(U("/api/rename"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, name: name.trim() }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      // Only reflect the new name locally once the server accepted it.
+      if (batteries[address]) batteries[address].name = name.trim();
+      renderCards(); populateBatterySelect();
+    } catch (_) {
+      alert("Could not rename the battery — check the connection and try again.");
+    }
   }
 
   // ---- per-battery alarm thresholds ---------------------------------
@@ -299,10 +325,15 @@
         <button class="btn" id="thr-save">Save</button>
       </div>`);
     async function post(overrides) {
-      await fetch(U("/api/thresholds"), { method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, overrides }) });
-      closeModal();
+      try {
+        const r = await fetch(U("/api/thresholds"), { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address, overrides }) });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        closeModal();
+      } catch (_) {
+        alert("Could not save thresholds — check the connection and try again.");
+      }
     }
     $("thr-save").onclick = () => {
       const overrides = {};
@@ -327,16 +358,22 @@
     if (cur) sel.value = cur;
   }
 
+  // Monotonic request tokens so a slow response for a previously-selected
+  // battery/range can't overwrite the chart with stale (wrong-battery) data.
+  let histReq = 0, summaryReq = 0;
+
   async function loadHistory() {
     const addr = $("hist-battery").value;
     const minutes = $("hist-range").value;
     if (!addr) return;
+    const my = ++histReq;
     $("hist-export").href = U(`/api/export.csv?address=${encodeURIComponent(addr)}&minutes=${minutes}`);
     let data;
     try {
       const r = await fetch(U(`/api/history?address=${encodeURIComponent(addr)}&minutes=${minutes}`));
       data = await r.json();
     } catch (_) { return; }
+    if (my !== histReq) return;  // a newer request superseded this one
     const rows = data.rows || [];
     const col = (k) => rows.map((r) => [r.ts, r[k]]);
     KVCharts.lineChart($("chart-voltage"), [{ name: "V", color: "#38d39f", points: col("voltage") }], { unit: "V" });
@@ -350,11 +387,13 @@
   async function loadSummary(addr) {
     const tb = $("summary-body");
     if (!tb) return;
+    const my = ++summaryReq;
     tb.innerHTML = "";  // clear first so a failed/switched request never shows stale rows
     let data;
     try {
       data = await (await fetch(U(`/api/summary?address=${encodeURIComponent(addr)}&days=30`))).json();
     } catch (_) { return; }
+    if (my !== summaryReq) return;  // superseded by a newer selection
     (data.days || []).forEach((d) => {
       const tr = document.createElement("tr");
       const cells = [
@@ -379,8 +418,13 @@
   $("hist-refresh").addEventListener("click", loadHistory);
   $("hist-battery").addEventListener("change", loadHistory);
   $("hist-range").addEventListener("change", loadHistory);
+  let resizeTimer = null;
   window.addEventListener("resize", () => {
-    if ($("tab-history").classList.contains("active")) loadHistory();
+    // Debounce: a drag-resize fires continuously; only redraw once it settles.
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if ($("tab-history").classList.contains("active")) loadHistory();
+    }, 250);
   });
 
   // ---- events -------------------------------------------------------
@@ -451,8 +495,12 @@
   });
   document.addEventListener("click", (e) => {
     const t = e.target.closest(".tip");
-    if (t) { e.stopPropagation(); if (tipPinned === t) hideTip(); else { tipPinned = t; showTip(t); } }
-    else if (tipPinned) hideTip();
+    // Ignore decorative .tip icons that carry no data-tip, otherwise they'd
+    // "pin" an empty bubble and freeze hover tooltips on the real ones.
+    if (t && t.getAttribute("data-tip")) {
+      e.stopPropagation();
+      if (tipPinned === t) hideTip(); else { tipPinned = t; showTip(t); }
+    } else if (tipPinned) hideTip();
   });
   window.addEventListener("scroll", hideTip, true);
 
@@ -565,7 +613,7 @@
     if (wizState.method === "ble") {
       const bt = pf.bluetooth || {};
       if (bt.installed) {
-        checks.push(ok(`Bluetooth support installed (bleak ${esc(bt.version || "")})`));
+        checks.push(ok(`Bluetooth support installed (bleak ${bt.version || ""})`));
       } else {
         hardFail = true;
         checks.push(bad("Bluetooth support not installed", "Run: pip install bleak — or use the demo / an ESP32."));
@@ -609,7 +657,7 @@
         if (!okResp && !$("wiz-err")) {
           const div = document.createElement("div");
           div.id = "wiz-err";
-          div.innerHTML = bad("Could not start that source", esc((j && j.error) || "Please try again or pick another option."));
+          div.innerHTML = bad("Could not start that source", (j && j.error) || "Please try again or pick another option.");
           $("wiz-checks").appendChild(div);
         }
       } catch (e) { okResp = false; }
@@ -640,7 +688,7 @@
       ["Bluetooth (bleak)", d.bleak_version || "not installed"],
       ["Serial (pyserial)", d.pyserial_version || "not installed"],
       ["Hardware alerting", d.hardware_alerting || "off"],
-      ["Batteries online", `${d.online_count} / ${d.battery_count}`],
+      ["Batteries online", `${d.online_count ?? 0} / ${d.battery_count ?? 0}`],
       ["Data folder", d.db_path],
     ];
     $("diag-system").innerHTML = sys.map(([k, v]) =>
@@ -733,6 +781,173 @@
     if (btn.dataset.tab === "diag") diagTimer = setInterval(() => { refreshDiag(); refreshLog(); }, 4000);
   }));
 
+  // ---- view on your phone (offline QR) ------------------------------
+  async function openConnect() {
+    let info = { url: location.href, lan_accessible: false };
+    try { info = await (await fetch(U("/api/connect"))).json(); } catch (_) {}
+    const url = info.url || location.href;
+    const note = info.lan_accessible
+      ? "Scan this with your phone's camera — it must be on the same Wi-Fi as this monitor."
+      : "This monitor is only reachable on this computer. Start it with LAN access "
+        + "(or run it on the cabin box) to view it from a phone.";
+    openModal(`
+      <button class="close-x">×</button>
+      <h2>View on your phone</h2>
+      <p class="sub">${esc(note)}</p>
+      <div class="qr-wrap"><img class="qr-img" alt="QR code linking to the dashboard"
+           src="${U("/api/qr.svg")}"></div>
+      <p class="qr-url"><a href="${esc(url)}">${esc(url)}</a></p>
+      <p class="sub">On iPhone: open the link in Safari, then tap <b>Share → Add to
+        Home Screen</b> for a full-screen app icon.</p>
+      <div class="wiz-actions"><span></span><button class="btn" data-close>Done</button></div>`);
+  }
+  const btnPhone = $("btn-phone"); if (btnPhone) btnPhone.addEventListener("click", openConnect);
+
+  // ---- display / kiosk presets --------------------------------------
+  let displayCfg = { preset: "bank", focus_address: "", font_scale: 1.0, theme: "dark" };
+  const PRESETS = ["bank", "soc", "single", "fleet"];
+
+  function applyFocus() {
+    const cards = Array.from(document.querySelectorAll("#battery-grid .card"));
+    const single = displayCfg.preset === "single";
+    const focus = single
+      ? (cards.find((c) => c.dataset.address === displayCfg.focus_address) || cards[0] || null)
+      : null;
+    cards.forEach((c) => c.classList.toggle("focused", single && c === focus));
+  }
+
+  function applyDisplay(cfg) {
+    displayCfg = Object.assign({}, displayCfg, cfg || {});
+    const preset = PRESETS.includes(displayCfg.preset) ? displayCfg.preset : "bank";
+    const b = document.body;
+    b.classList.remove("display-bank", "display-soc", "display-single",
+                       "display-fleet", "theme-light");
+    b.classList.add("display-" + preset);
+    if (displayCfg.theme === "light") b.classList.add("theme-light");
+    const scale = Math.max(0.8, Math.min(2.5, Number(displayCfg.font_scale) || 1));
+    b.style.zoom = String(scale);
+    applyFocus();
+  }
+
+  async function openDisplay() {
+    let cfg = displayCfg;
+    try { cfg = await (await fetch(U("/api/display"))).json(); } catch (_) {}
+    const opts = Object.values(batteries).map((bt) =>
+      `<option value="${esc(bt.address)}">${esc(bt.name || bt.address)}</option>`).join("");
+    openModal(`
+      <button class="close-x">×</button>
+      <h2>Screen setup</h2>
+      <p class="sub">Customize what this display shows. Saved on the box, so the
+        kiosk keeps it across reboots (and updates any connected phone live).</p>
+      <div class="disp-form">
+        <label>Layout
+          <select id="disp-preset">
+            <option value="bank">Bank overview — all batteries</option>
+            <option value="fleet">Fleet — compact grid for many batteries</option>
+            <option value="soc">Giant charge % — one big number</option>
+            <option value="single">Single battery — large</option>
+          </select>
+        </label>
+        <label>Focus battery <small>(for the single-battery layout)</small>
+          <select id="disp-focus"><option value="">First battery</option>${opts}</select>
+        </label>
+        <label>Text size <b id="disp-scale-val"></b>
+          <input type="range" id="disp-scale" min="0.8" max="2.5" step="0.1">
+        </label>
+        <label>Theme
+          <select id="disp-theme"><option value="dark">Dark</option><option value="light">Light (bright screens)</option></select>
+        </label>
+      </div>
+      <div class="wiz-actions">
+        <button class="btn btn-ghost" data-close>Cancel</button>
+        <button class="btn" id="disp-save">Apply</button>
+      </div>`);
+    $("disp-preset").value = cfg.preset || "bank";
+    $("disp-focus").value = cfg.focus_address || "";
+    $("disp-scale").value = cfg.font_scale || 1.0;
+    $("disp-theme").value = cfg.theme || "dark";
+    const showScale = () => { $("disp-scale-val").textContent = (+$("disp-scale").value).toFixed(1) + "×"; };
+    showScale();
+    $("disp-scale").addEventListener("input", showScale);
+    const read = () => ({
+      preset: $("disp-preset").value, focus_address: $("disp-focus").value,
+      font_scale: +$("disp-scale").value, theme: $("disp-theme").value,
+    });
+    $("disp-save").onclick = async () => {
+      const body = read();
+      try {
+        const r = await fetch(U("/api/display"), { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        applyDisplay(body);
+        closeModal();
+      } catch (_) {
+        alert("Could not save the screen settings — check the connection and try again.");
+      }
+    };
+  }
+  const btnDisplay = $("btn-display"); if (btnDisplay) btnDisplay.addEventListener("click", openDisplay);
+
+  // ---- settings editor (no config.toml) -----------------------------
+  async function openSettings() {
+    let s = {};
+    try { s = await (await fetch(U("/api/settings"))).json(); } catch (_) {}
+    const thr = THRESHOLD_FIELDS.map(([f, label, unit]) =>
+      `<label class="thr-row"><span>${esc(label)} <small>(${esc(unit)})</small></span>
+        <input type="number" step="any" data-f="${f}" value="${s[f] != null ? esc(s[f]) : ""}"></label>`).join("");
+    const alertNote = s.hardware_configured ? ""
+      : " — no siren/relay wired up yet";
+    openModal(`
+      <button class="close-x">×</button>
+      <h2>Settings</h2>
+      <p class="sub">Change how the monitor behaves. Saved on the box — no config
+        file to edit, and it survives a reboot.</p>
+      <h3 class="set-h">Alarm thresholds <small>(when you get warned)</small></h3>
+      <div class="thr-grid">${thr}</div>
+      <h3 class="set-h">Alerts &amp; logging</h3>
+      <div class="disp-form">
+        <label>Sound the siren/relay on${esc(alertNote)}
+          <select id="set-alert">
+            <option value="critical">Critical alarms only</option>
+            <option value="any">Any alarm (incl. warnings)</option>
+            <option value="none">Never</option>
+          </select>
+        </label>
+        <label>Save a history point every <small>(seconds)</small>
+          <input type="number" id="set-loginterval" min="1" step="1">
+        </label>
+        <label>Keep history for <small>(days; 0 = forever)</small>
+          <input type="number" id="set-retention" min="0" step="1">
+        </label>
+      </div>
+      <div class="wiz-actions">
+        <button class="btn btn-ghost" data-close>Cancel</button>
+        <button class="btn" id="set-save">Save</button>
+      </div>`);
+    $("set-alert").value = s.alert_on || "critical";
+    $("set-loginterval").value = s.log_interval != null ? s.log_interval : 10;
+    $("set-retention").value = s.retention_days != null ? s.retention_days : 90;
+    $("set-save").onclick = async () => {
+      const body = {
+        alert_on: $("set-alert").value,
+        log_interval: +$("set-loginterval").value,
+        retention_days: +$("set-retention").value,
+      };
+      modalBox.querySelectorAll("input[data-f]").forEach((inp) => {
+        if (inp.value !== "") body[inp.dataset.f] = +inp.value;
+      });
+      try {
+        const r = await fetch(U("/api/settings"), { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        closeModal();
+      } catch (_) {
+        alert("Could not save settings — check the connection and try again.");
+      }
+    };
+  }
+  const btnSettings = $("btn-settings"); if (btnSettings) btnSettings.addEventListener("click", openSettings);
+
   // Token-aware download links (Diagnostics tab).
   const dlLog = $("dl-log"); if (dlLog) dlLog.href = U("/api/log?kb=256");
   const dlDiag = $("dl-diag"); if (dlDiag) dlDiag.href = U("/api/diagnostics.zip");
@@ -744,5 +959,7 @@
     // First run: greet new users with the setup wizard.
     if (!localStorage.getItem("kv_seen")) { localStorage.setItem("kv_seen", "1"); openWizard(); }
   }).catch(() => {});
+  // Apply the saved screen layout (set once on the box; the kiosk uses it on boot).
+  fetch(U("/api/display")).then((r) => r.json()).then(applyDisplay).catch(() => {});
   connect();
 })();

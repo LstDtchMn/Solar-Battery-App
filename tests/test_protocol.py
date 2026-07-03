@@ -80,6 +80,20 @@ def test_decode_cells_and_delta():
     assert len(sample.active_cells) == 4
 
 
+def test_cell_index_is_physical_when_a_cell_is_dead():
+    # A dead/disconnected early cell (<=0.05 V) is dropped from active_cells;
+    # the reported indices must still be the physical cell numbers.
+    s = BatterySample(
+        voltage=13.0, current=0.0, total_capacity=100.0, cycles=0, soc=50.0,
+        temperature=22.0, status=0x100,
+        cell_voltages=[3.30, 0.0, 3.10, 3.40] + [0.0] * 12,
+    )
+    assert s.min_cell == pytest.approx(3.10)
+    assert s.max_cell == pytest.approx(3.40)
+    assert s.min_cell_index == 3  # physical cell 3, not position 2 in active list
+    assert s.max_cell_index == 4  # physical cell 4, not position 3
+
+
 def test_state_from_current_sign():
     base = build_reference_frame()
     # patch current field to +5 A and -5 A by re-encoding via encode_frame

@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
   <title>KiloVault HLX+ Monitor</title>
+  <!-- Installable web app: "Add to Home Screen" gives a full-screen icon on iOS/Android -->
+  <link rel="manifest" href="/static/manifest.webmanifest" />
+  <meta name="theme-color" content="#0e1116" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="KiloVault" />
+  <link rel="apple-touch-icon" href="/static/icon-180.png" />
+  <link rel="icon" type="image/png" href="/static/icon-192.png" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -16,6 +25,9 @@
       <span id="conn-pill" class="pill pill-idle">connecting…</span>
       <span id="transport-pill" class="pill">—</span>
       <button id="btn-setup" class="pill pill-btn" title="Set up your connection">⚙ Setup</button>
+      <button id="btn-phone" class="pill pill-btn" title="View on your phone">📱 Phone</button>
+      <button id="btn-display" class="pill pill-btn" title="Screen layout &amp; text size">📺 Screen</button>
+      <button id="btn-settings" class="pill pill-btn" title="Alarm thresholds &amp; logging">⚙ Settings</button>
       <button id="btn-help" class="pill pill-btn" title="Help &amp; glossary">? Help</button>
       <span id="clock" class="pill pill-muted"></span>
     </div>

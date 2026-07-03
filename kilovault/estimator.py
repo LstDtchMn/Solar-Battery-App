@@ -54,13 +54,17 @@ class BatteryState:
         self._last_ts = None
 
     def update(self, sample: BatterySample) -> None:
+        self.frames_received += 1
+        if not sample.crc_ok:
+            # A corrupt frame is counted for diagnostics but never trusted:
+            # integrating its (possibly garbage) current/power into the energy
+            # counters or showing it would poison the totals and the min/max.
+            self.crc_errors += 1
+            return
         if self.capacity_override is not None:
             self.capacity_ah = self.capacity_override
         elif sample.total_capacity and sample.total_capacity > 0:
             self.capacity_ah = sample.total_capacity
-        self.frames_received += 1
-        if not sample.crc_ok:
-            self.crc_errors += 1
         ts = sample.timestamp or time.time()
         if self._last_ts is not None:
             dt = ts - self._last_ts
@@ -158,7 +162,10 @@ def bank_summary(states: List[BatteryState]) -> dict:
     total_current = sum(s.sample.current for s in live)
     total_power = sum(s.sample.power for s in live)
     total_capacity = sum(s.capacity_ah for s in live)
-    total_remaining = sum(s.sample.remaining_capacity for s in live)
+    # Derive remaining from the same (override-aware) capacity used for the
+    # total and the weighted SoC, so all three agree when a user sets a custom
+    # capacity that differs from the pack-reported value.
+    total_remaining = sum(s.capacity_ah * (s.sample.soc / 100.0) for s in live)
     weighted_soc = (
         sum(s.sample.soc * s.capacity_ah for s in live) / total_capacity
         if total_capacity else 0.0
@@ -170,7 +177,9 @@ def bank_summary(states: List[BatteryState]) -> dict:
     max_cell = max(all_cells) if all_cells else 0.0
 
     alarms = sorted({a for s in live for a in s.sample.alarms})
-    temps = [s.sample.temperature for s in live]
+    # Ignore physically-impossible readings (e.g. a missing sensor decoding to
+    # ~-273 C) so one glitch can't drag the whole bank's min/max off the chart.
+    temps = [s.sample.temperature for s in live if -50.0 <= s.sample.temperature <= 150.0]
 
     return {
         "battery_count": len(states),
@@ -183,8 +192,8 @@ def bank_summary(states: List[BatteryState]) -> dict:
         "total_capacity_ah": round(total_capacity, 1),
         "remaining_capacity_ah": round(total_remaining, 1),
         "soc": round(weighted_soc, 1),
-        "min_temperature": round(min(temps), 1),
-        "max_temperature": round(max(temps), 1),
+        "min_temperature": round(min(temps), 1) if temps else None,
+        "max_temperature": round(max(temps), 1) if temps else None,
         "min_cell": round(min_cell, 3),
         "max_cell": round(max_cell, 3),
         "bank_cell_delta": round(max_cell - min_cell, 3),

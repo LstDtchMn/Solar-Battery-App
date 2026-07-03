@@ -161,13 +161,15 @@ class BatterySample:
 
     @property
     def min_cell_index(self) -> int:
+        # Physical cell number (1-based) into cell_voltages, not the position in
+        # the filtered active_cells list — a dead early cell would shift the rest.
         cells = self.active_cells
-        return (cells.index(min(cells)) + 1) if cells else 0
+        return (self.cell_voltages.index(min(cells)) + 1) if cells else 0
 
     @property
     def max_cell_index(self) -> int:
         cells = self.active_cells
-        return (cells.index(max(cells)) + 1) if cells else 0
+        return (self.cell_voltages.index(max(cells)) + 1) if cells else 0
 
     @property
     def alarms(self) -> List[str]:

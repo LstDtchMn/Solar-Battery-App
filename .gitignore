@@ -28,3 +28,9 @@ firmware/esp32_bridge/.pio/
 *.swp
 .idea/
 .vscode/
+
+# Runtime artifacts (never commit local data or secrets)
+.web_token
+*.db
+kilovault.log
+config.toml

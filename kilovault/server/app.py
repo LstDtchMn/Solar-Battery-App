@@ -34,6 +34,9 @@ from ..manager import Manager
 
 log = logging.getLogger(__name__)
 
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+mimetypes.add_type("image/svg+xml", ".svg")
+
 
 def _resolve_static_dir() -> Path:
     """Find the bundled static assets, including inside a PyInstaller .exe."""
@@ -50,6 +53,11 @@ STATIC_DIR = _resolve_static_dir()
 
 _LOOPBACK = {"127.0.0.1", "localhost", "::1", ""}
 _MAX_BODY = 64 * 1024  # POST bodies are tiny JSON objects
+# Bound request intake so a slow/hostile client on the LAN can't pin a
+# connection open forever (slow-loris) or exhaust memory with endless headers.
+_REQUEST_TIMEOUT = 20.0     # seconds to receive the request line + headers + body
+_MAX_HEADERS = 100          # max header lines
+_MAX_HEADER_BYTES = 32 * 1024  # max total header bytes
 
 
 class DashboardServer:
@@ -61,13 +69,34 @@ class DashboardServer:
         # When exposed beyond loopback (e.g. --lan / 0.0.0.0), require a shared
         # token on every /api/* request so the LAN can't read data or control
         # the monitor without it. On loopback, no token (only this PC can reach).
-        import secrets
         self.token: Optional[str] = (
-            secrets.token_urlsafe(16) if host not in _LOOPBACK else None
+            self._resolve_token() if host not in _LOOPBACK else None
         )
         self._allowed_hosts = {"127.0.0.1", "localhost", "::1"}
         if host not in ("0.0.0.0", "::") and host not in self._allowed_hosts:
             self._allowed_hosts.add(host)
+
+    def _resolve_token(self) -> str:
+        """A stable access token: an explicit config value, else a persistent
+        auto-generated one stored in the data dir (so a phone's saved link keeps
+        working across restarts)."""
+        import secrets
+
+        cfgtok = (getattr(self.manager.cfg.web, "token", "") or "").strip()
+        if cfgtok:
+            return cfgtok
+        try:
+            p = Path(self.manager.cfg.data_dir) / ".web_token"
+            if p.exists():
+                existing = p.read_text().strip()
+                if existing:
+                    return existing
+            token = secrets.token_urlsafe(16)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(token)
+            return token
+        except Exception:
+            return secrets.token_urlsafe(16)
 
     async def start(self) -> None:
         self._server = await asyncio.start_server(self._handle, self.host, self.port)
@@ -79,38 +108,57 @@ class DashboardServer:
             await self._server.serve_forever()
 
     # ------------------------------------------------------------------
+    async def _read_request(self, reader):
+        """Read the request line, headers, and body with bounds. Returns
+        (method, raw_path, headers, body) or a ("__err__", status) tuple."""
+        request_line = await reader.readline()
+        if not request_line:
+            return None
+        parts = request_line.decode("latin1").split()
+        if len(parts) < 2:
+            return ("__err__", 400)
+        method, raw_path = parts[0], parts[1]
+
+        headers = {}
+        total = 0
+        while True:
+            line = await reader.readline()
+            if line in (b"\r\n", b"\n", b""):
+                break
+            total += len(line)
+            if len(headers) >= _MAX_HEADERS or total > _MAX_HEADER_BYTES:
+                return ("__err__", 431)
+            k, _, v = line.decode("latin1").partition(":")
+            headers[k.strip().lower()] = v.strip()
+
+        body = b""
+        if "content-length" in headers:
+            try:
+                n = int(headers["content-length"])
+            except ValueError:
+                n = 0
+            if n > _MAX_BODY:
+                return ("__err__", 413)
+            try:
+                body = await reader.readexactly(n) if n > 0 else b""
+            except asyncio.IncompleteReadError:
+                body = b""
+        return (method, raw_path, headers, body)
+
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
-            request_line = await reader.readline()
-            if not request_line:
-                writer.close()
+            try:
+                result = await asyncio.wait_for(
+                    self._read_request(reader), timeout=_REQUEST_TIMEOUT)
+            except asyncio.TimeoutError:
+                return  # slow/idle client — drop the connection
+            if result is None:
                 return
-            parts = request_line.decode("latin1").split()
-            if len(parts) < 2:
-                await self._send(writer, 400, "text/plain", b"bad request")
-                return
-            method, raw_path = parts[0], parts[1]
-
-            headers = {}
-            while True:
-                line = await reader.readline()
-                if line in (b"\r\n", b"\n", b""):
-                    break
-                k, _, v = line.decode("latin1").partition(":")
-                headers[k.strip().lower()] = v.strip()
-
-            body = b""
-            if "content-length" in headers:
-                try:
-                    n = int(headers["content-length"])
-                except ValueError:
-                    n = 0
-                if n > _MAX_BODY:
-                    return await self._send(writer, 413, "text/plain", b"payload too large")
-                try:
-                    body = await reader.readexactly(n) if n > 0 else b""
-                except asyncio.IncompleteReadError:
-                    body = b""
+            if result[0] == "__err__":
+                msg = {400: b"bad request", 413: b"payload too large",
+                       431: b"headers too large"}.get(result[1], b"error")
+                return await self._send(writer, result[1], "text/plain", msg)
+            method, raw_path, headers, body = result
 
             path, _, query = raw_path.partition("?")
             params = urllib.parse.parse_qs(query)
@@ -188,23 +236,34 @@ class DashboardServer:
             if not addr:
                 return await self._json(writer, {"error": "address required"}, 400)
             days = _num(params, "days", 30, int, 1, 366)
-            return await self._json(writer, {
-                "address": addr,
-                "days": self.manager.storage.daily_summary(addr, days),
-            })
+            rows = await self._run_db(self.manager.storage.daily_summary, addr, days)
+            return await self._json(writer, {"address": addr, "days": rows})
 
         if method == "GET" and path == "/api/events":
             addr = _one(params, "address")
             limit = _num(params, "limit", 200, int, 1, 2000)
-            return await self._json(
-                writer, {"events": self.manager.storage.recent_events(addr, limit)}
-            )
+            evts = await self._run_db(self.manager.storage.recent_events, addr, limit)
+            return await self._json(writer, {"events": evts})
 
         if method == "GET" and path == "/api/diagnostics":
             return await self._json(writer, self.manager.diagnostics())
 
         if method == "GET" and path == "/api/preflight":
             return await self._json(writer, self._preflight())
+
+        if method == "GET" and path == "/api/connect":
+            return await self._json(writer, self._connect_info())
+
+        if method == "GET" and path == "/api/qr.svg":
+            url = _one(params, "url") or self._phone_url()
+            try:
+                from .. import qrcode as _qr
+                svg = _qr.svg(url, scale=8, border=4)
+            except Exception as exc:
+                return await self._send(writer, 500, "text/plain",
+                                        f"qr failed: {exc}".encode())
+            return await self._send(writer, 200, "image/svg+xml", svg.encode(),
+                                    extra_headers={"Cache-Control": "no-store"})
 
         if method == "POST" and path == "/api/test-bluetooth":
             from ..transports.ble import quick_scan
@@ -257,9 +316,30 @@ class DashboardServer:
             except (TypeError, ValueError):
                 return await self._json(writer, {"ok": False, "error": "bad capacity"}, 400)
 
+        if method == "GET" and path == "/api/settings":
+            return await self._json(writer, self.manager.app_settings())
+
+        if method == "POST" and path == "/api/settings":
+            saved = self.manager.set_app_settings(_json_body(body))
+            return await self._json(writer, {"ok": True, "settings": saved})
+
+        if method == "GET" and path == "/api/display":
+            return await self._json(writer, self._display_settings())
+
+        if method == "POST" and path == "/api/display":
+            saved = self._save_display(_json_body(body))
+            await self._publish_display(saved)
+            return await self._json(writer, {"ok": True, "display": saved})
+
         return await self._send(writer, 404, "text/plain", b"not found")
 
     # ------------------------------------------------------------------
+    async def _run_db(self, fn, *args):
+        """Run a (blocking) storage read off the event loop so a big query
+        can't stall live SSE feeds or the collector."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fn(*args))
+
     async def _history(self, writer, params):
         addr = _one(params, "address")
         if not addr:
@@ -267,9 +347,96 @@ class DashboardServer:
         minutes = _num(params, "minutes", 180.0, float, 0.0, 525600.0)
         points = _num(params, "points", 2000, int, 100, 8000)
         since = time.time() - minutes * 60 if minutes > 0 else None
-        rows = self.manager.storage.history(
-            addr, since=since, limit=20000, max_points=points)
+        # Offloaded: the downsample scans up to 20k rows and would otherwise
+        # freeze the event loop (and every SSE feed) for the query's duration.
+        rows = await self._run_db(
+            lambda: self.manager.storage.history(
+                addr, since=since, limit=20000, max_points=points))
         return await self._json(writer, {"address": addr, "rows": rows})
+
+    def _lan_ip(self) -> str:
+        """Best-guess LAN IP of this machine (works offline; no traffic sent)."""
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                # Picks the outbound interface without sending anything;
+                # 192.0.2.1 is TEST-NET-1 (reserved, never routed).
+                s.connect(("192.0.2.1", 1))
+                ip = s.getsockname()[0]
+            finally:
+                s.close()
+            if ip and not ip.startswith("127."):
+                return ip
+        except Exception:
+            pass
+        try:
+            ip = socket.gethostbyname(socket.gethostname())
+            if ip and not ip.startswith("127."):
+                return ip
+        except Exception:
+            pass
+        return "127.0.0.1"
+
+    def _phone_url(self) -> str:
+        """The URL a phone on the same Wi-Fi should open (includes the token)."""
+        advertised = (getattr(self.manager.cfg.web, "advertised_host", "") or "").strip()
+        if advertised:
+            host = advertised
+        elif self.host in ("0.0.0.0", "::"):
+            host = self._lan_ip()
+        else:
+            host = "localhost" if self.host in _LOOPBACK else self.host
+        q = f"?token={self.token}" if self.token else ""
+        return f"http://{host}:{self.port}/{q}"
+
+    def _connect_info(self) -> dict:
+        return {
+            "url": self._phone_url(),
+            "lan_accessible": self.host in ("0.0.0.0", "::"),
+            "has_token": bool(self.token),
+        }
+
+    # -- display / kiosk customization ----------------------------------
+    _DISPLAY_DEFAULTS = {
+        "preset": "bank",         # bank | soc | single
+        "focus_address": "",      # which battery the 'single'/'soc' presets show
+        "font_scale": 1.0,        # 0.8 .. 2.5
+        "theme": "dark",          # dark | light
+    }
+
+    def _display_settings(self) -> dict:
+        stored = self.manager.storage.get_setting("display", {}) or {}
+        out = dict(self._DISPLAY_DEFAULTS)
+        if isinstance(stored, dict):
+            out.update({k: stored[k] for k in out if k in stored})
+        return out
+
+    def _save_display(self, data: dict) -> dict:
+        cur = self._display_settings()
+        preset = str(data.get("preset", cur["preset"]))
+        if preset not in ("bank", "soc", "single", "fleet"):
+            preset = cur["preset"]
+        theme = str(data.get("theme", cur["theme"]))
+        if theme not in ("dark", "light"):
+            theme = cur["theme"]
+        try:
+            scale = float(data.get("font_scale", cur["font_scale"]))
+        except (TypeError, ValueError):
+            scale = cur["font_scale"]
+        scale = max(0.8, min(2.5, scale))
+        focus = str(data.get("focus_address", cur["focus_address"]))[:64]
+        saved = {"preset": preset, "focus_address": focus,
+                 "font_scale": round(scale, 2), "theme": theme}
+        self.manager.storage.set_setting("display", saved)
+        return saved
+
+    async def _publish_display(self, saved: dict) -> None:
+        # Push to every open client so the kiosk + phones update live.
+        try:
+            await self.manager.broadcast({"type": "display", "display": saved})
+        except Exception:
+            log.debug("display broadcast failed", exc_info=True)
 
     def _preflight(self) -> dict:
         """Environment capability check for the setup wizard."""
@@ -341,15 +508,18 @@ class DashboardServer:
 
     async def _serve_diagnostics_zip(self, writer):
         from ..diagnostics import build_zip
+        out = None
         try:
             loop = asyncio.get_running_loop()
             out = await loop.run_in_executor(None, build_zip, self.manager.cfg)
             data = await loop.run_in_executor(None, Path(out).read_bytes)
-            Path(out).unlink(missing_ok=True)
         except Exception as exc:
             log.exception("diagnostics zip failed")
             return await self._send(writer, 500, "text/plain",
                                     f"diagnostics failed: {exc}".encode())
+        finally:
+            if out:
+                Path(out).unlink(missing_ok=True)
         fname = f"kilovault_diagnostics_{int(time.time())}.zip"
         await self._send(writer, 200, "application/zip", data,
                          extra_headers={"Content-Disposition":
@@ -366,9 +536,11 @@ class DashboardServer:
             self.manager.storage.export_csv(tmp, address=addr or None, since=since)
             return tmp.read_bytes()
 
-        data = await asyncio.get_running_loop().run_in_executor(None, _do_export)
-        tmp.unlink(missing_ok=True)
-        fname = f"kilovault_{addr or 'all'}_{int(time.time())}.csv"
+        try:
+            data = await asyncio.get_running_loop().run_in_executor(None, _do_export)
+        finally:
+            tmp.unlink(missing_ok=True)  # never leave a temp CSV behind
+        fname = _safe_filename(f"kilovault_{addr or 'all'}_{int(time.time())}.csv")
         await self._send(
             writer, 200, "text/csv", data,
             extra_headers={"Content-Disposition": f'attachment; filename="{fname}"'},
@@ -417,11 +589,13 @@ class DashboardServer:
         await self._send(writer, 200, ctype, path.read_bytes())
 
     async def _send(self, writer, status, ctype, body: bytes, extra_headers=None):
-        reason = {200: "OK", 400: "Bad Request", 404: "Not Found",
+        reason = {200: "OK", 204: "No Content", 400: "Bad Request",
+                  401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
+                  413: "Payload Too Large", 431: "Request Header Fields Too Large",
                   500: "Internal Server Error"}.get(status, "OK")
         head = [
             f"HTTP/1.1 {status} {reason}",
-            f"Content-Type: {ctype}",
+            f"Content-Type: {_hsan(ctype)}",
             f"Content-Length: {len(body)}",
             # No CORS header: the dashboard is same-origin, so this keeps the
             # browser's same-origin policy protecting the data from other sites.
@@ -429,9 +603,23 @@ class DashboardServer:
             "Connection: close",
         ]
         for k, v in (extra_headers or {}).items():
-            head.append(f"{k}: {v}")
+            # Strip CR/LF so a value derived from user input (e.g. an export
+            # filename built from a query param) can't inject extra headers.
+            head.append(f"{_hsan(k)}: {_hsan(v)}")
         writer.write(("\r\n".join(head) + "\r\n\r\n").encode() + body)
         await writer.drain()
+
+
+def _hsan(value) -> str:
+    """Strip CR/LF from an HTTP header value to prevent response splitting."""
+    return str(value).replace("\r", "").replace("\n", "")
+
+
+def _safe_filename(name: str) -> str:
+    """A filename safe to drop into a Content-Disposition header: keep only
+    friendly characters so nothing from a query param can break out of it."""
+    cleaned = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in str(name))
+    return cleaned[:120] or "download"
 
 
 def _one(params, key, default=""):

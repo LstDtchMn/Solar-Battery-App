@@ -110,18 +110,21 @@
     const { ctx, w, h } = fitCanvas(canvas);
     ctx.clearRect(0, 0, w, h);
     const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 8;
-    const frac = Math.max(0, Math.min(100, pct)) / 100;
+    // A missing SoC must not draw a NaN arc or print "NaN%".
+    const valid = Number.isFinite(pct);
+    const p = valid ? pct : 0;
+    const frac = Math.max(0, Math.min(100, p)) / 100;
     ctx.lineWidth = 10; ctx.lineCap = "round";
     ctx.strokeStyle = "#272d38";
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-    const color = pct <= 15 ? "#ff5a5f" : pct <= 35 ? "#ffb23e" : "#38d39f";
+    const color = p <= 15 ? "#ff5a5f" : p <= 35 ? "#ffb23e" : "#38d39f";
     ctx.strokeStyle = color;
     ctx.beginPath();
     ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
     ctx.stroke();
     ctx.fillStyle = "#e7ecf3"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.font = "700 20px sans-serif";
-    ctx.fillText(Math.round(pct) + "%", cx, cy - 2);
+    ctx.fillText(valid ? Math.round(pct) + "%" : "—", cx, cy - 2);
     if (label) {
       ctx.font = "11px sans-serif"; ctx.fillStyle = "#8b95a7";
       ctx.fillText(label, cx, cy + 16);

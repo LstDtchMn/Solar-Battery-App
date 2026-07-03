@@ -1,0 +1,33 @@
+# KiloVault HLX+ Monitor — cabin box config (Raspberry Pi).
+# Copied to ~/kilovault/config.toml by deploy/install-pi.sh.
+
+[app]
+data_dir = "/home/pi/kilovault"   # history DB + log live here
+log_interval = 30                  # gentler on the SD card than the 10s default
+retention_days = 365               # keep a year; older rows are pruned
+
+[transport]
+type = "ble"                       # the Pi's built-in Bluetooth
+# If the Pi is far from the bank, use an ESP32 bridge instead:
+# type = "serial"
+# serial_port = "/dev/ttyUSB0"
+
+[web]
+host = "0.0.0.0"                    # reachable from phones on the cabin Wi-Fi
+port = 8765
+token = "CHANGE-ME-cabin"          # required over the LAN; used by phone + kiosk
+# When the Pi is its own Wi-Fi hotspot (deploy/setup-hotspot.sh), set this to
+# the hotspot address so the phone link + QR code are correct. That script
+# fills it in for you; 10.42.0.1 is NetworkManager's default AP address.
+# advertised_host = "10.42.0.1"
+
+[alarms]
+enabled = true
+
+[hardware]
+# Sound a siren / flash a light on a critical alarm (optional).
+alert_on = "critical"
+# serial_relay_port = "/dev/ttyUSB1"
+# serial_relay_on  = "A0 01 01 A2"
+# serial_relay_off = "A0 01 00 A1"
+# gpio_pin = 17            # or drive a relay straight off the Pi header (needs gpiozero)

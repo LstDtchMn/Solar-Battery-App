@@ -105,3 +105,41 @@ def test_bank_summary_no_data():
     summary = bank_summary([st])
     assert summary["online_count"] == 0
     assert summary["battery_count"] == 1
+
+
+def test_crc_failed_frame_is_not_integrated():
+    st = BatteryState(address="AA")
+    st.update(make_sample(0, 10.0, soc=50.0))     # good baseline
+    good = st.sample
+    ah_before = st.ah_charged
+    bad = make_sample(1, 9999.0, soc=50.0)        # absurd current...
+    bad.crc_ok = False                             # ...on a corrupt frame
+    st.update(bad)
+    assert st.crc_errors == 1
+    assert st.frames_received == 2                 # still counted
+    assert st.ah_charged == ah_before             # but never integrated
+    assert st.sample is good                       # and never displayed
+
+
+def test_bank_remaining_consistent_with_capacity_override():
+    st = BatteryState(address="A")
+    st.capacity_override = 200.0                    # user says it's a 200 Ah pack
+    st.update(make_sample(0, 0.0, soc=50.0, cap=100.0))  # pack reports 100 Ah
+    summary = bank_summary([st])
+    assert summary["total_capacity_ah"] == pytest.approx(200.0)
+    # remaining must track the chosen capacity, not the pack value (=> 100, not 50)
+    assert summary["remaining_capacity_ah"] == pytest.approx(100.0)
+
+
+def test_bank_ignores_impossible_temperature():
+    a = BatteryState(address="A")
+    sa = make_sample(0, 0.0, soc=50.0)
+    sa.temperature = -273.15                        # missing sensor sentinel
+    a.update(sa)
+    b = BatteryState(address="B")
+    sb = make_sample(0, 0.0, soc=50.0)
+    sb.temperature = 24.0
+    b.update(sb)
+    summary = bank_summary([a, b])
+    assert summary["min_temperature"] == pytest.approx(24.0)  # -273 excluded
+    assert summary["max_temperature"] == pytest.approx(24.0)
