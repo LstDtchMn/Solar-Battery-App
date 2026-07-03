@@ -297,6 +297,11 @@ Because it runs off the same 12 V system it’s monitoring, power the Pi from a
 good **12 V→5 V USB buck converter** rated for your Pi (3 A for a Pi 4/5). Don’t
 use a bargain car‑USB adapter; undervoltage is the top cause of SD corruption.
 
+Want a **self-powered outdoor unit** with its own small solar panel and battery
+(independent of the bank it monitors)? See the full build guide with a parts
+list, wiring, sizing, and cold-weather notes:
+[**docs/OUTDOOR-SOLAR.md**](OUTDOOR-SOLAR.md).
+
 ---
 
 ## 11. Optional: siren or light on a critical alarm

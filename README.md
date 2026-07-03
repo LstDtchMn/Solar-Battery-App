@@ -148,7 +148,8 @@ and a 📱 QR code opens the dashboard on your iPhone without typing.
 
 Full walkthrough (SD imaging, hotspot, kiosk, screen layouts, iPhone "Add to
 Home Screen", watchdog, siren alerts, SD-card longevity):
-[**`docs/CABIN.md`**](docs/CABIN.md).
+[**`docs/CABIN.md`**](docs/CABIN.md). For a **self-powered outdoor unit** (its own
+solar panel + battery), see the build guide [**`docs/OUTDOOR-SOLAR.md`**](docs/OUTDOOR-SOLAR.md).
 
 ## Commands
 
